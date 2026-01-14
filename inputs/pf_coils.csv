@@ -1,0 +1,15 @@
+name,Rc,Zc,I
+# --- Shaping pair (outboard, upper/lower) ---
+OB_top,2.35, 1.25,  180000
+OB_bot,2.35,-1.25,  260000
+
+# --- Shaping pair (inboard, upper/lower) ---
+IB_top,1.15, 1.00, -120000
+IB_bot,1.15,-1.00, -185000
+
+# --- Vertical field / position control (far) ---
+VF_top,2.90, 2.20,   25000
+VF_bot,2.90,-2.20,   90000
+
+# --- Dedicated divertor (lower) coil near expected X-point region ---
+DIV_L,2.05,-1.75,  -2600000

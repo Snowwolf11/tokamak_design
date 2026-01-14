@@ -1,0 +1,24 @@
+# domain
+Rmin,1.0
+Rmax,3.0
+Zmin,-2.0
+Zmax,2.0
+NR,257
+NZ,257
+
+# TF model
+TF_R0,1.65
+TF_B0,3.5
+
+# reference point for psi_sep definition
+R_ref,2.2
+Z_ref,0.0
+
+# plasma current profile
+Ip_target,800000
+alpha_j,1.5
+
+# iteration
+max_iter,40
+tol_rel,2e-4
+relax,0.6
