@@ -1,0 +1,71 @@
+# ============================================================
+# solver.yaml
+# ------------------------------------------------------------
+# Numerical settings for:
+# - fixed-boundary GS solve
+# - free-boundary outer iterations
+# - coil fitting / regularization
+# ============================================================
+
+meta:
+  name: "default_solver_settings"
+  schema_version: "0.1"
+
+fixed_boundary_gs:
+  # Nonlinear solve settings
+  max_picard_iter: 80
+  tol_rel_change: 1.0e-6       # convergence on psi update
+  under_relaxation: 0.4        # omega in psi <- (1-ω)psi_old + ω psi_new
+
+  # Linear solver settings
+  linear_solver: "spsolve"     # "spsolve" (direct) or "cg" (iterative)
+  cg_tol: 1.0e-10
+  cg_max_iter: 5000
+
+  # Boundary enforcement
+  boundary_condition: "dirichlet"
+  psi_lcfs: 0.0
+
+  # Mask/boundary extraction
+  mask_method: "point_in_polygon"  # stable and easy
+  boundary_grid_snap: true         # snap boundary points to nearest grid nodes (v1)
+
+free_boundary:
+  # Outer iteration settings
+  max_outer_iter: 40
+  tol_lcfs_change: 2.0e-3       # relative change measure for boundary movement
+  tol_Ip_change: 1.0e-3         # relative change in Ip between iterations
+  under_relax_lcfs: 0.6         # relax boundary updates to avoid oscillations
+
+  # LCFS contour selection
+  lcfs_contour_selector: "enclosing_axis_largest_area"
+  lcfs_resample_points: 360
+
+  # Optional safety: keep LCFS inside vessel by clipping/penalty (v1 just detect)
+  detect_wall_intersections: true
+
+coil_fit:
+  # Inverse problem regularization / constraints
+  method: "ridge"               # "ridge" or "lsq_linear"
+  reg_lambda: 1.0e-6            # regularization strength (tune)
+  weight_by_coil_limits: true   # W ~ 1/Imax^2 in penalty term
+
+  # Fit points
+  boundary_fit_points: 180      # use fewer points than full boundary polyline
+  target_psi_on_boundary: 0.0
+
+  # Bounds handling
+  enforce_bounds: true
+  bounds_method: "clip_then_refit"  # simple v1; later active-set
+
+numerics:
+  # Differencing choices
+  finite_difference_order: 2
+  # Handling near boundaries / smoothing
+  smooth_jphi: false
+  smooth_sigma: 0.0
+
+output:
+  # What to store
+  store_iteration_history: true
+  store_debug_arrays: false

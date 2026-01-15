@@ -602,7 +602,7 @@ def save_gs_h5(
 # =============================================================================
 if __name__ == "__main__":
     # Base directory where simXXX folders are created
-    BASE_OUTPUT_DIR = "/Users/leon/Desktop/python_skripte/tokamak_design/runs"  # <-- change as desired
+    BASE_OUTPUT_DIR = "/Users/leon/Desktop/python_skripte/tokamak_design/old/runs"  # <-- change as desired
 
     # Solve equilibrium
     R, Z, psi, (Rb, Zb), inside_mask = solve_gs_fixed_shaped_boundary()

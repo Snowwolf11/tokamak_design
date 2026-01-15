@@ -1,0 +1,29 @@
+# boundary shape targets
+R0,1.65
+a,0.50
+kappa,1.75
+delta,0.35
+n_boundary,48
+
+# x-point target (lower SN)
+want_xpoint,1
+Rx,1.90
+Zx,-1.55
+
+# axis target
+want_axis,1
+Raxis,1.65
+Zaxis,0.0
+
+# weights
+w_boundary,1.0
+w_xpoint,5.0
+w_axis,2.0
+
+# optimizer knobs
+max_outer,12
+dI_fd,2000
+step_scale,0.4
+reg_lambda,1e-4
+tol_rms,1e-3
+Imax,500000

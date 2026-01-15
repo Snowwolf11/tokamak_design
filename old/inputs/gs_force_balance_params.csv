@@ -15,9 +15,9 @@ R_ref,3.25
 Z_ref,0.0
 
 # profiles
-p0,20000
+p0,15000
 alpha_p,1.5
-F0,6.0
+F0,4.5
 deltaF,0.12
 betaF,1.0
 

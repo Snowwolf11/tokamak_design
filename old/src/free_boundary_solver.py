@@ -44,10 +44,10 @@ from scipy.sparse.linalg import spsolve
 MU0 = 4e-7 * np.pi
 
 # -------------------------- hardcoded paths ---------------------------
-HARD_CODED_BASE = "/Users/leon/Desktop/python_skripte/tokamak_design/runs"
+HARD_CODED_BASE = "/Users/leon/Desktop/python_skripte/tokamak_design/old/runs"
 
-PARAMS_CSV = "/Users/leon/Desktop/python_skripte/tokamak_design/inputs/gs_free_boundary_params.csv"
-COILS_CSV  = "/Users/leon/Desktop/python_skripte/tokamak_design/inputs/pf_coils.csv"
+PARAMS_CSV = "/Users/leon/Desktop/python_skripte/tokamak_design/old/inputs/gs_free_boundary_params.csv"
+COILS_CSV  = "/Users/leon/Desktop/python_skripte/tokamak_design/old/inputs/pf_coils.csv"
 
 OUT_PREFIX = "gs_free_boundary"
 H5_NAME = "equilibrium.h5"

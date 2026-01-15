@@ -185,7 +185,7 @@ def main():
     # Hardcoded postproc path (your request)
     # ---------------------------------------------------------------------
     post_path = os.path.abspath(
-        "/Users/leon/Desktop/python_skripte/tokamak_design/runs/sim001/postproc/run001/postproc.h5"
+        "/Users/leon/Desktop/python_skripte/tokamak_design/old/runs/sim001/postproc/run001/postproc.h5"
     )
     if not os.path.isfile(post_path):
         raise FileNotFoundError(f"postproc.h5 not found at {post_path}")

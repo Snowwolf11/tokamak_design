@@ -74,7 +74,7 @@ from scipy.interpolate import RegularGridInterpolator
 # =============================================================================
 
 # Path to the GS solution you want to analyze (stored by your GS solver)
-GS_FILE = "/Users/leon/Desktop/python_skripte/tokamak_design/runs/sim001/gs_solution.h5"
+GS_FILE = "/Users/leon/Desktop/python_skripte/tokamak_design/old/runs/sim001/gs_solution.h5"
 MU0 = 4e-7 * np.pi
 
 # These parameters must match the "toy" profile model used in the GS solver,

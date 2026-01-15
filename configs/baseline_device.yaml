@@ -1,0 +1,143 @@
+# ============================================================
+# baseline_device.yaml
+# ------------------------------------------------------------
+# Hardware-ish description of the device geometry + coils.
+# This is NOT a full engineering model: it’s enough to run
+# equilibrium + coil fitting + basic constraints.
+#
+# Units convention (recommended):
+#   - Lengths in meters (m)
+#   - Currents in amperes (A)
+#   - Magnetic fields in tesla (T)
+# ============================================================
+
+meta:
+  name: "toy_tokamak_v1"
+  description: "Baseline machine geometry for learning GS + coil design"
+  schema_version: "0.1"
+
+grid:
+  # Computational R-Z grid where you solve for psi(R,Z)
+  R_min: 0.3         # [m] include inboard region but stay away from R=0
+  R_max: 2.5         # [m]
+  Z_min: -1.6        # [m]
+  Z_max: 1.6         # [m]
+  NR: 321            # number of R grid points
+  NZ: 321            # number of Z grid points
+
+toroidal_field:
+  # For v1 you can treat toroidal field as externally imposed:
+  # Bphi(R) ~ B0 * R0 / R
+  R0: 1.65           # [m] reference major radius for B0
+  B0: 2.5            # [T] toroidal field at R0
+  # Future hook: TF coil geometry, stresses, peak field on conductor, etc.
+  # tf_coils: ...
+
+vessel:
+  # Vacuum vessel / first wall boundary. Used for clearance/gap metrics.
+  # Represented as a polyline of (R,Z) points in order (closed or open).
+  #
+  # Two options:
+  #  - "polyline": explicit list of points
+  #  - "parametric": simple ellipse/circle generation
+  representation: "parametric"  # "parametric" or "polyline"
+
+  parametric:
+    # Simple ellipse centered at (R_center, Z_center)
+    R_center: 1.65     # [m]
+    Z_center: 0.0      # [m]
+    a_wall: 1.05       # [m] horizontal semi-axis of vessel
+    b_wall: 1.45       # [m] vertical semi-axis of vessel
+    n_points: 400      # resolution of polyline
+
+  polyline:
+    # If representation="polyline", provide points here.
+    # points: [[R1, Z1], [R2, Z2], ...]
+    points: []
+
+pf_coils:
+  # Poloidal Field coils approximated as filamentary circular loops
+  # (or axisymmetric current rings) at centers (Rc,Zc).
+  #
+  # a: coil "size proxy" [m] used only for plotting or basic limits;
+  #    you are not modeling actual conductor cross-section yet.
+  #
+  # I_init: initial current guess [A]
+  # I_max: current magnitude limit [A] (constraint)
+  #
+  # NOTE: coil positions are a KEY optimization/design variable later.
+  coils:
+    - name: "PF1U"
+      Rc: 1.00
+      Zc: 1.25
+      a: 0.15
+      I_init: 0.0
+      I_max: 2.0e6
+
+    - name: "PF1L"
+      Rc: 1.00
+      Zc: -1.25
+      a: 0.15
+      I_init: 0.0
+      I_max: 2.0e6
+
+    - name: "PF2U"
+      Rc: 2.10
+      Zc: 1.10
+      a: 0.18
+      I_init: 0.0
+      I_max: 2.0e6
+
+    - name: "PF2L"
+      Rc: 2.10
+      Zc: -1.10
+      a: 0.18
+      I_init: 0.0
+      I_max: 2.0e6
+
+    - name: "PF3U"
+      Rc: 2.25
+      Zc: 0.55
+      a: 0.18
+      I_init: 0.0
+      I_max: 2.0e6
+
+    - name: "PF3L"
+      Rc: 2.25
+      Zc: -0.55
+      a: 0.18
+      I_init: 0.0
+      I_max: 2.0e6
+
+    - name: "PF4"
+      Rc: 2.30
+      Zc: 0.0
+      a: 0.22
+      I_init: 0.0
+      I_max: 2.0e6
+
+central_solenoid:
+  # In v1 you might treat the solenoid as:
+  #  - (a) another set of "coils" at small R (simple), OR
+  #  - (b) ignore it and prescribe Ip directly.
+  #
+  # Keep this config so the repo is expandable.
+  enabled: true
+  model: "lumped"       # "lumped" (simple ring) or "multi_turn" (later)
+  Rc: 0.60              # [m]
+  Zc: 0.0               # [m]
+  a: 0.25               # [m] proxy radius
+  I_init: 0.0           # [A]
+  I_max: 8.0e6          # [A]
+
+constraints:
+  # Simple geometric constraints for early design loops.
+  min_wall_gap: 0.05     # [m] minimum clearance between LCFS and vessel
+  min_coil_wall_gap: 0.05 # [m] coil-to-vessel minimum gap (optional)
+  # Future hook: stress proxies, coil-coil clearance, etc.
+
+numerics:
+  # Settings related to precomputations for speed.
+  precompute_coil_greens: true
+  greens_method: "analytic_elliptic"  # "analytic_elliptic" recommended
+  # Future hook: fast multipole / caching schemes, etc.

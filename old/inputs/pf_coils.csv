@@ -12,4 +12,4 @@ VF_top,2.90, 2.20,   25000
 VF_bot,2.90,-2.20,   90000
 
 # --- Dedicated divertor (lower) coil near expected X-point region ---
-DIV_L,2.05,-1.75,  -2600000
+DIV_L,2.05,-1.85,  -300000
