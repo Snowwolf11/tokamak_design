@@ -122,7 +122,7 @@ central_solenoid:
   #  - (b) ignore it and prescribe Ip directly.
   #
   # Keep this config so the repo is expandable.
-  enabled: true
+  enabled: False
   model: "lumped"       # "lumped" (simple ring) or "multi_turn" (later)
   Rc: 0.60              # [m]
   Zc: 0.0               # [m]

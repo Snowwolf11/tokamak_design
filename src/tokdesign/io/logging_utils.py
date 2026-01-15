@@ -56,8 +56,11 @@ def setup_logger(log_path: Path, level: str = "INFO") -> logging.Logger:
     logger_name = "tokdesign"
     logger = logging.getLogger(logger_name)
 
-    # Prevent duplicate handlers if setup_logger is called multiple times
+    # If handlers already exist in THIS process, just ensure formatting/levels
     if logger.handlers:
+        for h in logger.handlers:
+            h.setLevel(logger.level)
+            h.setFormatter(formatter)
         return logger
 
     # Set level
@@ -85,7 +88,7 @@ def setup_logger(log_path: Path, level: str = "INFO") -> logging.Logger:
     # --------------------------------------------------------
     # File handler
     # --------------------------------------------------------
-    fh = logging.FileHandler(log_path, mode="w")
+    fh = logging.FileHandler(log_path, mode="a")
     fh.setLevel(logger.level)
     fh.setFormatter(formatter)
     logger.addHandler(fh)

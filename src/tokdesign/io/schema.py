@@ -54,21 +54,156 @@ PathLike = Union[str, Path]
 # Minimal, practical schema for v0.1
 # Add/extend as your project grows.
 _SCHEMA_V01: Dict[str, List[str]] = {
+    # --------------------------------------------------------
     # After 00_init_run.py
+    # --------------------------------------------------------
     "init": [
         "/meta",
         "/meta/schema_version",
         "/meta/created_utc",
         "/meta/run_id",
+        # These may be blank/unknown early, but reserve the keys anyway
+        # (You can store empty strings if not known)
+        "/meta/git_commit",
+        "/meta/notes",
     ],
 
+    # --------------------------------------------------------
     # After 01_build_device.py
+    # --------------------------------------------------------
     "device": [
         "/grid",
         "/grid/R",
         "/grid/Z",
         "/grid/RR",
         "/grid/ZZ",
+
+        "/device",
+        "/device/vessel_boundary",
+
+        "/device/coils",
+        "/device/coils/names",
+        "/device/coils/centers",
+        "/device/coils/radii",
+        "/device/coils/I_max",
+        "/device/coils/I_pf",
+
+        # Optional in the overall format, but strongly recommended in v1
+        # because coil fitting depends on it.
+        "/device/coil_greens",
+        "/device/coil_greens/psi_per_amp",
+    ],
+
+    # --------------------------------------------------------
+    # After 02_target_boundary.py
+    # --------------------------------------------------------
+    "target": [
+        "/target",
+        "/target/boundary", #LCFS
+        "/target/psi_boundary",
+        "/target/global_targets",
+        "/target/global_targets/enforce",
+        "/target/global_targets/Ip_target",
+        # xpoint optional, so not required here
+    ],
+
+    # --------------------------------------------------------
+    # After 03_solve_fixed_gs.py (fixed-boundary equilibrium)
+    # --------------------------------------------------------
+    "fixed_eq": [
+        "/equilibrium",
+        "/equilibrium/psi",
+        "/equilibrium/psi_axis",
+        "/equilibrium/psi_lcfs",
+
+        "/equilibrium/p_psi",
+        "/equilibrium/F_psi",
+
+        "/equilibrium/plasma_mask",
+        "/equilibrium/jphi",
+
+        "/fields",
+        "/fields/BR",
+        "/fields/BZ",
+        "/fields/Bphi",
+
+        "/derived",
+        "/derived/Ip",
+        "/derived/beta_p",
+        "/derived/li",
+        "/derived/kappa",
+        "/derived/delta",
+        "/derived/q_profile",
+    ],
+
+    # --------------------------------------------------------
+    # After 05_solve_free_gs.py (free-boundary equilibrium)
+    # --------------------------------------------------------
+    "free_eq": [
+        # Keep the fixed-boundary outputs too (they’re still relevant),
+        # but also require the extra free-boundary products:
+        "/equilibrium",
+        "/equilibrium/psi_total",
+        "/equilibrium/psi_vac",
+        "/equilibrium/psi_plasma",
+        "/equilibrium/lcfs_poly",
+
+        # It’s still sensible to store these for the converged state:
+        "/equilibrium/psi_axis",
+        "/equilibrium/psi_lcfs",
+        "/equilibrium/p_psi",
+        "/equilibrium/F_psi",
+        "/equilibrium/plasma_mask",
+        "/equilibrium/jphi",
+
+        "/fields",
+        "/fields/BR",
+        "/fields/BZ",
+        "/fields/Bphi",
+
+        "/derived",
+        "/derived/Ip",
+        "/derived/beta_p",
+        "/derived/li",
+        "/derived/kappa",
+        "/derived/delta",
+        "/derived/q_profile",
+
+        "/analysis",
+        "/analysis/shape_metrics",
+        "/analysis/vertical_proxy",
+        # control_matrix might be optional early, but included here as a "complete" goal
+        "/analysis/control_matrix",
+    ],
+
+    # --------------------------------------------------------
+    # After 04_fit_pf_currents.py (coil fit results)
+    # --------------------------------------------------------
+    "optimization_fit": [
+        "/optimization",
+        "/optimization/objective_terms",
+        "/optimization/constraint_margins",
+        # If you store detailed fit outputs, you can require them too:
+        # "/optimization/fit_results",
+    ],
+
+    # --------------------------------------------------------
+    # Final “complete” stage (everything in the planned structure)
+    # --------------------------------------------------------
+    "complete": [
+        "/meta",
+        "/meta/schema_version",
+        "/meta/created_utc",
+        "/meta/run_id",
+        "/meta/git_commit",
+        "/meta/notes",
+
+        "/grid",
+        "/grid/R",
+        "/grid/Z",
+        "/grid/RR",
+        "/grid/ZZ",
+
         "/device",
         "/device/vessel_boundary",
         "/device/coils",
@@ -76,55 +211,47 @@ _SCHEMA_V01: Dict[str, List[str]] = {
         "/device/coils/centers",
         "/device/coils/radii",
         "/device/coils/I_max",
-        # Current vector may be stored as init or as I_pf; accept either later
-        # but keep a required placeholder for now:
         "/device/coils/I_pf",
-        # Coil greens (optional in principle, but in our workflow we recommend it)
         "/device/coil_greens",
         "/device/coil_greens/psi_per_amp",
-    ],
 
-    # After 02_target_boundary.py
-    "target": [
         "/target",
-        "/target/boundary",
-        "/target/psi_lcfs",
+        "/target/boundary", 
+        "/target/psi_boundary",
         "/target/global_targets",
         "/target/global_targets/enforce",
         "/target/global_targets/Ip_target",
-    ],
 
-    # After 03_solve_fixed_gs.py
-    "fixed_eq": [
         "/equilibrium",
         "/equilibrium/psi",
         "/equilibrium/psi_axis",
         "/equilibrium/psi_lcfs",
+        "/equilibrium/p_psi",
+        "/equilibrium/F_psi",
         "/equilibrium/plasma_mask",
         "/equilibrium/jphi",
+
         "/fields",
         "/fields/BR",
         "/fields/BZ",
         "/fields/Bphi",
+
         "/derived",
         "/derived/Ip",
-    ],
+        "/derived/beta_p",
+        "/derived/li",
+        "/derived/kappa",
+        "/derived/delta",
+        "/derived/q_profile",
 
-    # After 05_solve_free_gs.py
-    "free_eq": [
-        "/equilibrium/psi_total",
-        "/equilibrium/psi_vac",
-        "/equilibrium/psi_plasma",
-        "/equilibrium/lcfs_poly",
         "/analysis",
-        # Keep analysis requirements light in v1:
-        # if some are missing, report scripts can still work.
-    ],
+        "/analysis/shape_metrics",
+        "/analysis/vertical_proxy",
+        "/analysis/control_matrix",
 
-    # After 07_make_report.py (optional checks)
-    "report": [
-        # Not strictly required; many users might not run the report step.
-        # You can add "/meta/report_generated" later if you store that flag.
+        "/optimization",
+        "/optimization/objective_terms",
+        "/optimization/constraint_margins",
     ],
 }
 
@@ -372,6 +499,8 @@ if __name__ == "__main__":
             h5["/meta"].create_dataset("schema_version", data="0.1")
             h5["/meta"].create_dataset("created_utc", data=datetime.utcnow().isoformat() + "Z")
             h5["/meta"].create_dataset("run_id", data="TEST_RUN")
+            h5["/meta"].create_dataset("git_commit", data="TEST_RUN")
+            h5["/meta"].create_dataset("notes", data="TEST_RUN")
 
         # This should pass for init
         validate_h5_structure(fpath, "0.1", "init")
