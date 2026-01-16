@@ -19,7 +19,7 @@ meta:
 grid:
   # Computational R-Z grid where you solve for psi(R,Z)
   R_min: 0.3         # [m] include inboard region but stay away from R=0
-  R_max: 2.5         # [m]
+  R_max: 3.0         # [m]
   Z_min: -1.6        # [m]
   Z_max: 1.6         # [m]
   NR: 321            # number of R grid points
