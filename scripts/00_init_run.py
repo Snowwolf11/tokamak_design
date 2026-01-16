@@ -176,6 +176,7 @@ def main() -> None:
         h5_write_scalar(h5, "/meta/git_commit", git_commit)
         h5_write_scalar(h5, "/meta/notes", str(args.notes))
 
+        h5_ensure_group(h5, "/history")
         # Optionally create placeholder groups (helps browsing early)
         if args.create_placeholders:
             for g in ["/grid", "/device", "/target", "/equilibrium", "/fields", "/derived", "/analysis", "/optimization"]:

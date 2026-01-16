@@ -66,6 +66,7 @@ _SCHEMA_V01: Dict[str, List[str]] = {
         # (You can store empty strings if not known)
         "/meta/git_commit",
         "/meta/notes",
+        "/history"
     ],
 
     # --------------------------------------------------------

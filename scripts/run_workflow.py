@@ -16,7 +16,8 @@ Each stage is implemented as a standalone script:
   • 01_build_device.py
   • 02_target_boundary.py
   • 03_solve_fixed_gs.py
-  • (later: 04_fit_pf_currents.py, 05_solve_free_gs.py, ...)
+  • 04_fit_pf_currents.py
+  • (later: 05_solve_free_gs.py, ...)
 
 This driver:
   • runs the requested stages in the correct order
@@ -72,7 +73,7 @@ from typing import Callable, Dict, List, Optional
 
 # Order in which stages must be executed
 # (this enforces dependencies)
-STAGE_ORDER = ["00", "01", "02", "03"]
+STAGE_ORDER = ["00", "01", "02", "03", "04"]
 
 # Mapping from stage code to script filename
 STAGE_TO_SCRIPT = {
@@ -80,8 +81,8 @@ STAGE_TO_SCRIPT = {
     "01": "01_build_device.py",
     "02": "02_target_boundary.py",
     "03": "03_solve_fixed_gs.py",
-    # future:
-    # "04": "04_fit_pf_currents.py",
+    "04": "04_fit_pf_currents.py",
+    #Future:
     # "05": "05_solve_free_gs.py",
 }
 
@@ -223,6 +224,22 @@ CMD_BUILDERS: Dict[str, Callable[..., List[str]]] = {
     "02": _cmd_02,
     "03": _cmd_03,
 }
+
+def _cmd_04(args, scripts_dir, run_dir):
+    script = scripts_dir / STAGE_TO_SCRIPT["04"]
+    solver_for_step = _archived_or_given(run_dir, args.solver)
+
+    cmd = [
+        sys.executable, str(script),
+        "--run-dir", str(run_dir),
+        "--solver", str(solver_for_step),
+        "--log-level", args.log_level,
+    ]
+    if args.overwrite:
+        cmd.append("--overwrite")
+    return cmd
+
+CMD_BUILDERS["04"] = _cmd_04
 
 def _run_quicklook(args, scripts_dir, run_dir):
     if args.no_quicklook:

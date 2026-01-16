@@ -46,17 +46,18 @@ free_boundary:
 
 coil_fit:
   # Inverse problem regularization / constraints
-  method: "ridge"               # "ridge" or "lsq_linear"
+  method: "contour"               # "ridge" or "contour"
   reg_lambda: 1.0e-6            # regularization strength (tune)
   weight_by_coil_limits: true   # W ~ 1/Imax^2 in penalty term
 
   # Fit points
   boundary_fit_points: 180      # use fewer points than full boundary polyline
-  target_psi_on_boundary: 0.0
+  psi_ref: 1.0
 
   # Bounds handling
-  enforce_bounds: true
+  enforce_bounds: False
   bounds_method: "clip_then_refit"  # simple v1; later active-set
+  constraint: "mean"
 
 numerics:
   # Differencing choices

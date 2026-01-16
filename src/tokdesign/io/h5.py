@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
+from datetime import datetime
 
 import numpy as np
 import h5py
@@ -448,6 +449,93 @@ def open_h5(path: PathLike, mode: str = "r") -> h5py.File:
     p = Path(path).expanduser().resolve()
     return h5py.File(p, mode)
 
+
+# ============================================================
+# HISTORY
+# ============================================================
+
+def h5_make_history_event_id() -> str:
+    """
+    Create a sortable UTC event id.
+    Example: '2026-01-16T210534Z'
+    """
+    return datetime.utcnow().strftime("%Y-%m-%dT%H%M%SZ")
+
+
+def h5_snapshot_paths(
+    h5: h5py.File,
+    *,
+    stage: str,
+    src_paths: list[str],
+    event_id: str | None = None,
+    attrs: Attrs = None,
+    overwrite_event: bool = False,
+) -> str:
+    """
+    Snapshot selected HDF5 paths into /history/<stage>/<event_id>/...
+
+    Each src path is copied preserving its internal structure:
+        src '/device/coils/I_pf' ->
+        dst '/history/<stage>/<event_id>/device/coils/I_pf'
+
+    Parameters
+    ----------
+    stage : str
+        Stage label, e.g. '04_fit_pf_currents'
+    src_paths : list[str]
+        Paths (datasets or groups) to snapshot if they exist.
+    event_id : str or None
+        If None, generates one.
+    attrs : dict
+        Stored as attributes on the event group.
+    overwrite_event : bool
+        If True and the event group exists, it is deleted and recreated.
+
+    Returns
+    -------
+    event_id : str
+        The event id used.
+    """
+    stage = str(stage).strip()
+    if not stage:
+        raise ValueError("stage must be a non-empty string.")
+
+    if event_id is None:
+        event_id = h5_make_history_event_id()
+
+    base = f"/history/{stage}/{event_id}"
+    base = _normalize_h5_path(base)
+
+    # Ensure /history exists
+    h5_ensure_group(h5, "/history")
+
+    # (Re)create event group
+    if base in h5:
+        if overwrite_event:
+            del h5[base]
+        else:
+            raise FileExistsError(f"History event already exists: {base}")
+
+    ev_grp = h5_ensure_group(h5, base)
+    _set_attrs(ev_grp, attrs)
+
+    for src in src_paths:
+        src = _normalize_h5_path(src)
+        if src not in h5:
+            continue  # snapshot only what exists
+
+        dst = f"{base}/{src.lstrip('/')}"
+        parent, name = _split_parent(dst)
+        grp = h5_ensure_group(h5, parent)
+
+        # If something exists there (unlikely unless overwrite_event=False), remove it.
+        if name in grp:
+            del grp[name]
+
+        # h5py copy works for both datasets and groups
+        h5.copy(src, grp, name=name)
+
+    return event_id
 
 # ============================================================
 # SELF TEST
