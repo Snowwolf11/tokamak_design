@@ -4,8 +4,8 @@ coil_fit.py
 
 Fit PF coil currents to a target boundary (LCFS) using coil Green's functions.
 
-Two fitting modes
------------------
+Three fitting modes
+-------------------
 (1) method="boundary_value"  (classic ridge regression on absolute psi)
     min_{I,c} ||A I + c*1 - b||^2 + λ||I||^2
   - Fits boundary psi to a specified target value b (often constant).
@@ -13,12 +13,21 @@ Two fitting modes
   - WARNING: if b is constant 0 and coils can produce psi=0 at I=0,
     the trivial solution I=0 is optimal and uninformative.
 
-(2) method="contour"  (recommended for LCFS shaping)
-    min_I ||D (A I)||^2 + λ||I||^2   subject to  m^T(AI) = psi_ref
+(2) method="contour"  (recommended for LCFS shaping; KKT + active-set clamp)
+    min_I ||D (A I)||^2 + λ||I||^2   subject to  g^T I = psi_ref
   - D is a cyclic first-difference operator along boundary points.
   - This enforces "psi is (approximately) constant along the boundary" (i.e. boundary is a flux surface).
   - The constraint fixes the flux level to avoid the trivial I=0 solution.
     Common constraint: mean boundary psi equals psi_ref.
+  - Bounds (if requested) are handled by a simple active-set clamp/refit loop.
+
+(3) method="contour_qp"  (new; recommended default going forward)
+    min_I ||D(AI)||^2 + λ||I||^2   subject to  g^T I = psi_ref,  I_lo <= I <= I_hi
+  - Same contour objective as (2), but solved as a *convex constrained QP*
+    using scipy.optimize.minimize(method="trust-constr"), with analytic
+    gradient and constant Hessian.
+  - Typically more robust than hand-rolled active-set for bounds, and
+    produces reproducible results.
 
 Conventions
 -----------
@@ -60,6 +69,7 @@ from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
+from scipy.optimize import Bounds, LinearConstraint, minimize
 
 
 ArrayLike = Union[np.ndarray, float, int]
@@ -134,6 +144,44 @@ def _broadcast_bounds(Nc: int, I_bounds: Tuple[ArrayLike, ArrayLike]) -> Tuple[n
     if np.any(I_hi < I_lo):
         raise ValueError("Invalid I_bounds: some upper bounds are < lower bounds.")
     return I_lo, I_hi
+
+
+def _build_contour_matrices(A: np.ndarray, reg_lambda: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    For contour objectives, build:
+      D (Nb,Nb), K=D@A (Nb,Nc), M0 = K^T K + λ I (Nc,Nc)
+    """
+    Nb, Nc = A.shape
+    lam = float(reg_lambda)
+    D = _cyclic_first_difference_matrix(Nb)
+    K = D @ A
+    M0 = (K.T @ K) + lam * np.eye(Nc, dtype=float)
+    return D, K, M0
+
+
+def _build_constraint_vector(A: np.ndarray, constraint: str) -> np.ndarray:
+    """
+    Build g so that the constraint is:
+        g^T I = psi_ref
+    from either:
+      - "mean": mean boundary psi equals psi_ref
+      - "point" or "point:k": psi at a boundary point equals psi_ref
+    """
+    Nb, Nc = A.shape
+    constraint = str(constraint).lower().strip()
+    if constraint == "mean":
+        m = (1.0 / Nb) * np.ones(Nb, dtype=float)
+        g = (m @ A).reshape(-1)  # (Nc,)
+    elif constraint.startswith("point"):
+        if ":" in constraint:
+            idx = int(constraint.split(":", 1)[1])
+        else:
+            idx = 0
+        idx = int(np.clip(idx, 0, Nb - 1))
+        g = A[idx, :].copy()
+    else:
+        raise ValueError("constraint must be 'mean' or 'point' (optionally 'point:k').")
+    return g.astype(float)
 
 
 # ============================================================
@@ -255,7 +303,7 @@ def _solve_boundary_value(
 
 
 # ============================================================
-# METHOD 2: contour fit (recommended for LCFS shaping)
+# METHOD 2: contour fit (KKT + active-set clamp/refit)
 # ============================================================
 
 def _solve_contour(
@@ -267,41 +315,20 @@ def _solve_contour(
 ) -> Dict[str, np.ndarray]:
     """
     Solve:
-        min_I ||D(AI)||^2 + λ||I||^2   s.t.  m^T(AI) = psi_ref
+        min_I ||D(AI)||^2 + λ||I||^2   s.t.  g^T I = psi_ref
     """
     Nb, Nc = A.shape
     lam = float(reg_lambda)
 
-    D = _cyclic_first_difference_matrix(Nb)  # (Nb,Nb)
-    K = D @ A                                # (Nb,Nc)
-
-    # Constraint m^T(AI) = psi_ref
-    constraint = str(constraint).lower().strip()
-    if constraint == "mean":
-        # mean boundary psi = psi_ref  ->  (1/N) 1^T A I = psi_ref
-        m = (1.0 / Nb) * np.ones(Nb, dtype=float)
-        g = (m @ A).reshape(-1)  # (Nc,)
-    elif constraint.startswith("point"):
-        # "point" means fix psi at one boundary index (default 0), e.g. "point:10"
-        if ":" in constraint:
-            idx = int(constraint.split(":", 1)[1])
-        else:
-            idx = 0
-        idx = int(np.clip(idx, 0, Nb - 1))
-        g = A[idx, :].copy()
-    else:
-        raise ValueError("constraint must be 'mean' or 'point' (optionally 'point:k').")
-
-    # Objective matrix: M = K^T K + λ I
-    M = (K.T @ K) + lam * np.eye(Nc, dtype=float)
+    D, K, M0 = _build_contour_matrices(A, reg_lambda=lam)
+    g = _build_constraint_vector(A, constraint=constraint)
 
     def _solve_kkt(Mm: np.ndarray, gg: np.ndarray, rhs_c: float) -> np.ndarray:
         """
         Solve:
             [Mm  gg] [x ] = [0]
             [gg^T 0] [mu]   [rhs_c]
-
-        Returns x (same length as gg).
+        Returns x.
         """
         gg = np.asarray(gg, dtype=float).reshape(-1)
         n = int(Mm.shape[0])
@@ -321,7 +348,8 @@ def _solve_contour(
         sol = np.linalg.solve(KKT, rhs)
         return sol[:n]
 
-    I = _solve_kkt(M, g, psi_ref)
+    # Unbounded KKT solution as starting point
+    I = _solve_kkt(M0, g, float(psi_ref))
 
     I_lo = None
     I_hi = None
@@ -339,30 +367,25 @@ def _solve_contour(
             clamped = (I <= I_lo + eps) | (I >= I_hi - eps)
             free = ~clamped
 
-            # If no free vars, check feasibility of constraint
             if not np.any(free):
-                # constraint is g^T I = psi_ref; if violated, bounds make it infeasible
                 if abs(float(g @ I) - float(psi_ref)) > 1e-9 * max(1.0, abs(psi_ref)):
                     raise RuntimeError("Contour fit infeasible under bounds (constraint cannot be satisfied).")
                 break
 
-            # Partition and solve reduced KKT for free set
             Af = A[:, free]
             gf = g[free]
-
-            # Adjust constraint for fixed vars
             rhs_c = float(psi_ref - (g[clamped] @ I[clamped]))
 
-            Kf = D @ Af
+            Df = D
+            Kf = Df @ Af
             Mf = (Kf.T @ Kf) + lam * np.eye(Af.shape[1], dtype=float)
 
             If = _solve_kkt(Mf, gf, rhs_c)
             I[free] = If
 
-            # stop if stable after clamping
             I_next = np.minimum(np.maximum(I, I_lo), I_hi)
             clamped_next = (I_next <= I_lo) | (I_next >= I_hi)
-            if np.array_equal(clamped_next, clamped) and np.allclose(I_next, I, atol=0.0, rtol=0.0):
+            if np.array_equal(clamped_next, clamped):
                 I = I_next
                 clamped = clamped_next
                 break
@@ -373,27 +396,154 @@ def _solve_contour(
         I = np.minimum(np.maximum(I, I_lo), I_hi)
         clamped = (I <= I_lo) | (I >= I_hi)
 
-    # Compute boundary psi and diagnostics
-    psi_fit = A @ I  # (Nb,)
-    dpsi = D @ psi_fit
+    psi_fit = A @ I
+    dpsi = (_cyclic_first_difference_matrix(Nb) @ psi_fit)
     contour_rms = float(np.sqrt(np.mean(dpsi * dpsi)))
 
-    # For consistent outward API, define "b" as a constant array at psi_ref (for plotting only)
     b = np.full(Nb, float(psi_ref), dtype=float)
     residual = psi_fit - b
 
     return {
         "I_fit": I.astype(float),
-        "offset": np.array(0.0, dtype=float),  # not used in contour method
+        "offset": np.array(0.0, dtype=float),
         "psi_boundary_fit": psi_fit.astype(float),
         "residual": residual.astype(float),
-        # Here residual_rms is "contour RMS" (variation measure) not boundary-value error:
         "residual_rms": np.array(contour_rms, dtype=float),
         "contour_rms": np.array(contour_rms, dtype=float),
         "clamped": clamped.astype(bool),
         "psi_ref": np.array(float(psi_ref), dtype=float),
-        "constraint": np.array(constraint, dtype="S"),
+        "constraint": np.array(str(constraint), dtype="S"),
         **({} if I_lo is None else {"I_lo": I_lo.astype(float), "I_hi": I_hi.astype(float)}),
+    }
+
+
+# ============================================================
+# METHOD 3: contour QP (trust-constr)  <-- NEW
+# ============================================================
+
+def _solve_contour_qp(
+    A: np.ndarray,
+    reg_lambda: float,
+    psi_ref: float,
+    constraint: str,
+    I_bounds: Optional[Tuple[ArrayLike, ArrayLike]],
+) -> Dict[str, np.ndarray]:
+    """
+    Solve the convex constrained QP:
+        min_I  ||D(AI)||^2 + λ||I||^2
+        s.t.   g^T I = psi_ref
+               I_lo <= I <= I_hi   (optional)
+
+    Uses scipy.optimize.minimize(method="trust-constr") with analytic gradient and
+    constant Hessian (quadratic objective).
+    """
+    Nb, Nc = A.shape
+    lam = float(reg_lambda)
+
+    D, K, M0 = _build_contour_matrices(A, reg_lambda=lam)
+    g = _build_constraint_vector(A, constraint=constraint)
+
+    # Objective: f(I) = I^T M0 I  (since ||K I||^2 + lam||I||^2)
+    # Gradient:  ∇f = 2 M0 I
+    # Hessian:   ∇²f = 2 M0  (constant)
+    H = 2.0 * M0
+
+    def fun(I: np.ndarray) -> float:
+        I = np.asarray(I, float).reshape(-1)
+        return float(I @ (M0 @ I))
+
+    def jac(I: np.ndarray) -> np.ndarray:
+        I = np.asarray(I, float).reshape(-1)
+        return (2.0 * (M0 @ I)).astype(float)
+
+    def hess(_I: np.ndarray) -> np.ndarray:
+        return H
+
+    # Equality constraint g^T I = psi_ref
+    lin_con = LinearConstraint(g.reshape(1, -1), np.array([psi_ref], float), np.array([psi_ref], float))
+
+    # Bounds (optional)
+    if I_bounds is not None:
+        I_lo, I_hi = _broadcast_bounds(Nc, I_bounds)
+        bnds = Bounds(I_lo, I_hi)
+    else:
+        bnds = None
+        I_lo = None
+        I_hi = None
+
+    # Starting point: use the (unbounded) KKT contour solution, then clip into bounds.
+    # This gives a very good initial guess and usually converges in few iterations.
+    try:
+        I0 = _solve_contour(A, reg_lambda=lam, psi_ref=psi_ref, constraint=constraint, I_bounds=None)["I_fit"]
+    except Exception:
+        I0 = np.zeros(Nc, dtype=float)
+
+    if bnds is not None:
+        I0 = np.minimum(np.maximum(I0, I_lo), I_hi)
+
+    # Ensure equality constraint is satisfied at start as best-effort:
+    # Project along g if possible (only if g is not ~0).
+    gg = float(g @ g)
+    if gg > 0.0:
+        # shift I0 by alpha*g to satisfy g^T I0 = psi_ref (then bounds may break it)
+        alpha = (float(psi_ref) - float(g @ I0)) / gg
+        I0 = I0 + alpha * g
+        if bnds is not None:
+            I0 = np.minimum(np.maximum(I0, I_lo), I_hi)
+
+    res = minimize(
+        fun,
+        I0,
+        method="trust-constr",
+        jac=jac,
+        hess=hess,
+        constraints=[lin_con],
+        bounds=bnds,
+        options={
+            "verbose": 0,
+            "gtol": 1e-10,
+            "xtol": 1e-12,
+            "barrier_tol": 1e-12,
+            "maxiter": 2000,
+        },
+    )
+
+    if not res.success:
+        raise RuntimeError(f"contour_qp failed: {res.message}")
+
+    I = np.asarray(res.x, float).reshape(-1)
+
+    clamped = np.zeros(Nc, dtype=bool)
+    if I_bounds is not None:
+        eps = 1e-9
+        clamped = (I <= I_lo + eps) | (I >= I_hi - eps)
+
+        # Feasibility check for the equality constraint (trust-constr should respect it tightly).
+        # If bounds make it infeasible, SciPy may fail; we already raise above if so.
+        if abs(float(g @ I) - float(psi_ref)) > 1e-6 * max(1.0, abs(psi_ref)):
+            raise RuntimeError("contour_qp returned solution that violates constraint unexpectedly.")
+
+    psi_fit = A @ I
+    dpsi = D @ psi_fit
+    contour_rms = float(np.sqrt(np.mean(dpsi * dpsi)))
+
+    b = np.full(Nb, float(psi_ref), dtype=float)
+    residual = psi_fit - b
+
+    return {
+        "I_fit": I.astype(float),
+        "offset": np.array(0.0, dtype=float),
+        "psi_boundary_fit": psi_fit.astype(float),
+        "residual": residual.astype(float),
+        # residual_rms is interpreted as contour_rms for contour methods
+        "residual_rms": np.array(contour_rms, dtype=float),
+        "contour_rms": np.array(contour_rms, dtype=float),
+        "clamped": clamped.astype(bool),
+        "psi_ref": np.array(float(psi_ref), dtype=float),
+        "constraint": np.array(str(constraint), dtype="S"),
+        "qp_success": np.array(bool(res.success), dtype=np.uint8),
+        "qp_niter": np.array(int(res.niter), dtype=int),
+        **({} if I_bounds is None else {"I_lo": I_lo.astype(float), "I_hi": I_hi.astype(float)}),
     }
 
 
@@ -422,7 +572,7 @@ def fit_pf_currents_to_boundary(
       Fits absolute boundary psi (optionally with offset).
       Uses psi_target as b.
 
-    method="contour":
+    method in ("contour", "contour_qp", ...):
       Fits boundary to be a constant-psi contour using first differences + a constraint.
       Uses psi_ref and constraint, ignores psi_target (except for logging by caller).
 
@@ -431,19 +581,20 @@ def fit_pf_currents_to_boundary(
     plus diagnostics.
     """
     A = _build_A_from_greens(G_psi, boundary_pts, R, Z)
-    Nb, Nc = A.shape
+    Nb, _Nc = A.shape
 
     method = str(method).lower().strip()
+
+    # --- boundary-value (ridge) ---
     if method in ("boundary_value", "ridge", "tikhonov"):
-        # build b from psi_target
         if np.isscalar(psi_target):
             b = np.full(Nb, float(psi_target), dtype=float)
         else:
             b = np.asarray(psi_target, float).reshape(-1)
             if b.size != Nb:
                 raise ValueError(f"psi_target array must have shape (Nb,), got {b.shape} for Nb={Nb}.")
-        out = _solve_boundary_value(A, b, reg_lambda, I_bounds, fit_offset=fit_offset)
 
+        out = _solve_boundary_value(A, b, reg_lambda, I_bounds, fit_offset=fit_offset)
         psi_fit = out["psi_boundary_fit"]
         out.update({
             "A": A.astype(float),
@@ -454,6 +605,7 @@ def fit_pf_currents_to_boundary(
         })
         return out
 
+    # --- contour (active-set) ---
     if method in ("contour", "flux_surface", "lcfs"):
         out = _solve_contour(A, reg_lambda, psi_ref=float(psi_ref), constraint=str(constraint), I_bounds=I_bounds)
         psi_fit = out["psi_boundary_fit"]
@@ -466,7 +618,20 @@ def fit_pf_currents_to_boundary(
         })
         return out
 
-    raise ValueError(f"Unknown method '{method}'. Use 'boundary_value' or 'contour'.")
+    # --- contour QP (trust-constr) ---
+    if method in ("contour_qp", "qp", "contour-trust", "contour_trust"):
+        out = _solve_contour_qp(A, reg_lambda, psi_ref=float(psi_ref), constraint=str(constraint), I_bounds=I_bounds)
+        psi_fit = out["psi_boundary_fit"]
+        out.update({
+            "A": A.astype(float),
+            "b": np.full(Nb, float(psi_ref), dtype=float),
+            "psi_boundary_std": np.array(float(np.std(psi_fit)), dtype=float),
+            "psi_boundary_ptp": np.array(float(np.ptp(psi_fit)), dtype=float),
+            "method": np.array("contour_qp", dtype="S"),
+        })
+        return out
+
+    raise ValueError(f"Unknown method '{method}'. Use 'boundary_value', 'contour', or 'contour_qp'.")
 
 
 # ============================================================
@@ -474,7 +639,7 @@ def fit_pf_currents_to_boundary(
 # ============================================================
 
 if __name__ == "__main__":
-    print("Testing coil_fit.py (contour method)")
+    print("Testing coil_fit.py (contour_qp method)")
 
     rng = np.random.default_rng(0)
 
@@ -486,7 +651,6 @@ if __name__ == "__main__":
     Nb = 200
     th = np.linspace(0, 2 * np.pi, Nb, endpoint=False)
     boundary = np.column_stack([1.6 + 0.25 * np.cos(th), 0.0 + 0.35 * np.sin(th)])
-    pts_ZR = np.column_stack([boundary[:, 1], boundary[:, 0]])
 
     Nc = 8
     G_psi = np.zeros((Nc, NZ, NR), dtype=float)
@@ -503,37 +667,36 @@ if __name__ == "__main__":
             + 0.3 * np.sin(wR * (RR - 1.0) + wZ * ZZ + phase)
         )
 
-    # Quick rank sanity on A
-    A = _build_A_from_greens(G_psi, boundary, R, Z)
-    r = np.linalg.matrix_rank(A)
-    cond = np.linalg.cond(A)
-    print(f"  A: rank={r}, cond={cond:.3e}")
+    # Bounds in "physical I" here just as a test
+    Imax = np.full(Nc, 2.0, dtype=float)
+    I_bounds = (-Imax, +Imax)
 
-    # Contour fit should produce nonzero currents and satisfy mean psi constraint
     psi_ref = 1.0
     res = fit_pf_currents_to_boundary(
         G_psi=G_psi,
         boundary_pts=boundary,
         R=R, Z=Z,
-        psi_target=0.0,          # ignored in contour mode
+        psi_target=0.0,          # ignored in contour modes
         reg_lambda=1e-6,
-        I_bounds=None,
-        method="contour",
+        I_bounds=I_bounds,
+        method="contour_qp",
         psi_ref=psi_ref,
         constraint="mean",
     )
 
-    I = res["I_fit"]
-    psi_fit = res["psi_boundary_fit"]
+    I = np.asarray(res["I_fit"], float)
+    psi_fit = np.asarray(res["psi_boundary_fit"], float)
     mean_psi = float(np.mean(psi_fit))
     contour_rms = float(res["contour_rms"])
 
     print("  ||I||:", float(np.linalg.norm(I)))
     print("  mean(psi_fit):", mean_psi, "target:", psi_ref)
     print("  contour_rms:", contour_rms)
+    print("  clamped:", int(np.sum(res["clamped"])), "/", Nc)
+    print("  qp_niter:", int(np.asarray(res.get("qp_niter", 0)).item()))
 
-    assert np.linalg.norm(I) > 0.0, "Contour fit returned trivial zero currents."
-    assert abs(mean_psi - psi_ref) < 1e-9, "Mean-psi constraint not satisfied."
+    assert np.linalg.norm(I) > 0.0, "Contour QP returned trivial zero currents."
+    assert abs(mean_psi - psi_ref) < 1e-6, "Mean-psi constraint not satisfied (tolerance)."
     assert np.isfinite(contour_rms)
 
     print("coil_fit.py self-test passed.")

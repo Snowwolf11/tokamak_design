@@ -191,8 +191,8 @@ def main() -> None:
     psi_ref = float(coil_fit_cfg.get("psi_ref", 1.0))
     constraint = str(coil_fit_cfg.get("constraint", "mean"))
 
-    if method.lower() not in ("ridge", "contour"):
-        logger.warning("Unknown coil_fit.method='%s' (v1 uses ridge or contour). Proceeding anyway.", method)
+    if method.lower() not in ("ridge", "contour", "contour_qp"):
+        logger.warning("Unknown coil_fit.method='%s' (v1 uses ridge or contour or contour_qp). Proceeding anyway.", method)
 
     if reg_lambda < 0:
         raise ValueError("coil_fit.reg_lambda must be >= 0")
@@ -268,7 +268,7 @@ def main() -> None:
         G_use = G_psi
         bounds = (-I_max, +I_max) if enforce_bounds else None
 
-    if enforce_bounds and bounds_method.lower() not in ("clip", "clip_thrn_refit",  "active_set", "box"):
+    if enforce_bounds and bounds_method.lower() not in ("clip", "clip_then_refit",  "active_set", "box"):
         logger.warning("Unknown bounds_method='%s'. Using built-in clamp/active-set in coil_fit.", bounds_method)
 
     # -----------------------------
@@ -358,7 +358,7 @@ def main() -> None:
 
     logger.info("Mean boundary psi: %g (target psi_ref=%g)", mean_psi, psi_ref)
 
-    is_contour = str(method).lower().strip() in ("contour", "flux_surface", "lcfs")
+    is_contour = str(method).lower().strip() in ("contour", "contour_qp", "flux_surface", "lcfs", "gp", "contour_trust", "contour-trust")
     if is_contour:
         contour_rms = float(np.asarray(fit.get("contour_rms", fit["residual_rms"])).item())
         logger.info("Contour RMS (RMS of dpsi along boundary): %g (Wb/rad)", contour_rms)

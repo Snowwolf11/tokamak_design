@@ -19,9 +19,9 @@ plasma_geometry:
   type: "miller"        # "miller" (v1), "diverted" (later), "from_file" (later)
 
   R0: 1.65              # [m] major radius of plasma center
-  a: 0.7               # [m] minor radius (horizontal)
-  kappa: 1.75           # [-] elongation
-  delta: 0.35           # [-] triangularity
+  a: 0.5               # [m] minor radius (horizontal)
+  kappa: 1.6           # [-] elongation
+  delta: 0.5           # [-] triangularity
   n_boundary_points: 360 # resolution of boundary polyline
 
   # Optional offsets (for slight up/down shift)

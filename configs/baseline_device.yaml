@@ -18,12 +18,12 @@ meta:
 
 grid:
   # Computational R-Z grid where you solve for psi(R,Z)
-  R_min: 0.3         # [m] include inboard region but stay away from R=0
-  R_max: 3.0         # [m]
-  Z_min: -1.6        # [m]
-  Z_max: 1.6         # [m]
-  NR: 321            # number of R grid points
-  NZ: 321            # number of Z grid points
+  R_min: 0.2         # [m] include inboard region but stay away from R=0
+  R_max: 3.5         # [m]
+  Z_min: -1.9        # [m]
+  Z_max: 1.9         # [m]
+  NR: 400            # number of R grid points
+  NZ: 400            # number of Z grid points
 
 toroidal_field:
   # For v1 you can treat toroidal field as externally imposed:
@@ -46,8 +46,8 @@ vessel:
     # Simple ellipse centered at (R_center, Z_center)
     R_center: 1.65     # [m]
     Z_center: 0.0      # [m]
-    a_wall: 1.05       # [m] horizontal semi-axis of vessel
-    b_wall: 1.45       # [m] vertical semi-axis of vessel
+    a_wall: 0.7       # [m] horizontal semi-axis of vessel
+    b_wall: 1.05       # [m] vertical semi-axis of vessel
     n_points: 400      # resolution of polyline
 
   polyline:
@@ -68,53 +68,53 @@ pf_coils:
   # NOTE: coil positions are a KEY optimization/design variable later.
   coils:
     - name: "PF1U"
-      Rc: 1.00
-      Zc: 1.25
+      Rc: 1.05
+      Zc: 1.10
       a: 0.15
       I_init: 0.0
-      I_max: 2.0e6
+      I_max: 2.0e7
 
     - name: "PF1L"
-      Rc: 1.00
-      Zc: -1.25
+      Rc: 0.95
+      Zc: -0.40
       a: 0.15
       I_init: 0.0
-      I_max: 2.0e6
+      I_max: 2.0e7
 
     - name: "PF2U"
-      Rc: 2.10
+      Rc: 1.70
       Zc: 1.10
       a: 0.18
       I_init: 0.0
-      I_max: 2.0e6
+      I_max: 2.0e7
 
     - name: "PF2L"
-      Rc: 2.10
-      Zc: -1.10
+      Rc: 1.5
+      Zc: -1.05
       a: 0.18
       I_init: 0.0
-      I_max: 2.0e6
+      I_max: 2.0e7
 
     - name: "PF3U"
-      Rc: 2.25
-      Zc: 0.55
+      Rc: 2.4
+      Zc: 0.4
       a: 0.18
       I_init: 0.0
-      I_max: 2.0e6
+      I_max: 2.0e7
 
     - name: "PF3L"
-      Rc: 2.25
-      Zc: -0.55
+      Rc: 2.4
+      Zc: -0.4
       a: 0.18
       I_init: 0.0
-      I_max: 2.0e6
+      I_max: 2.0e7
 
     - name: "PF4"
-      Rc: 2.30
-      Zc: 0.0
+      Rc: 0.95
+      Zc: 0.4
       a: 0.22
       I_init: 0.0
-      I_max: 2.0e6
+      I_max: 2.0e7
 
 central_solenoid:
   # In v1 you might treat the solenoid as:
