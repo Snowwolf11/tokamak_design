@@ -55,7 +55,7 @@ coil_fit:
   psi_ref: 1.0
 
   # Bounds handling
-  enforce_bounds: False
+  enforce_bounds: True
   bounds_method: "clip_then_refit"  # simple v1; later active-set
   constraint: "mean"
 
