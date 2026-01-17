@@ -581,12 +581,48 @@ def fit_pf_currents_to_boundary(
     plus diagnostics.
     """
     A = _build_A_from_greens(G_psi, boundary_pts, R, Z)
-    Nb, _Nc = A.shape
+    return fit_pf_currents_to_boundary_from_A(
+        A=A,
+        psi_target=psi_target,
+        reg_lambda=reg_lambda,
+        I_bounds=I_bounds,
+        method=method,
+        fit_offset=fit_offset,
+        psi_ref=psi_ref,
+        constraint=constraint,
+    )
 
-    method = str(method).lower().strip()
 
-    # --- boundary-value (ridge) ---
-    if method in ("boundary_value", "ridge", "tikhonov"):
+def fit_pf_currents_to_boundary_from_A(
+    A: np.ndarray,
+    psi_target: ArrayLike,
+    reg_lambda: float,
+    I_bounds: Optional[Tuple[ArrayLike, ArrayLike]] = None,
+    *,
+    method: str = "boundary_value",
+    fit_offset: bool = True,
+    psi_ref: float = 1.0,
+    constraint: str = "mean",
+) -> Dict[str, np.ndarray]:
+    """
+    Same as fit_pf_currents_to_boundary, but takes A directly (Nb,Nc).
+
+    This is crucial for coil position optimization because it avoids recomputing
+    full-grid greens: you can evaluate A at boundary points directly.
+
+    Returns same dict keys as fit_pf_currents_to_boundary().
+    """
+    A = np.asarray(A, float)
+    if A.ndim != 2:
+        raise ValueError("A must be 2D (Nb,Nc).")
+    Nb, Nc = A.shape
+    if Nb < 2 or Nc < 1:
+        raise ValueError("A has invalid shape.")
+
+    method_l = str(method).lower().strip()
+
+    # boundary-value: b is psi_target (scalar or vector)
+    if method_l in ("boundary_value", "ridge", "tikhonov"):
         if np.isscalar(psi_target):
             b = np.full(Nb, float(psi_target), dtype=float)
         else:
@@ -605,8 +641,8 @@ def fit_pf_currents_to_boundary(
         })
         return out
 
-    # --- contour (active-set) ---
-    if method in ("contour", "flux_surface", "lcfs"):
+    # contour (active-set)
+    if method_l in ("contour", "flux_surface", "lcfs"):
         out = _solve_contour(A, reg_lambda, psi_ref=float(psi_ref), constraint=str(constraint), I_bounds=I_bounds)
         psi_fit = out["psi_boundary_fit"]
         out.update({
@@ -618,8 +654,8 @@ def fit_pf_currents_to_boundary(
         })
         return out
 
-    # --- contour QP (trust-constr) ---
-    if method in ("contour_qp", "qp", "contour-trust", "contour_trust"):
+    # contour QP (trust-constr)
+    if method_l in ("contour_qp", "qp", "contour-trust", "contour_trust"):
         out = _solve_contour_qp(A, reg_lambda, psi_ref=float(psi_ref), constraint=str(constraint), I_bounds=I_bounds)
         psi_fit = out["psi_boundary_fit"]
         out.update({
@@ -632,7 +668,6 @@ def fit_pf_currents_to_boundary(
         return out
 
     raise ValueError(f"Unknown method '{method}'. Use 'boundary_value', 'contour', or 'contour_qp'.")
-
 
 # ============================================================
 # SELF TEST

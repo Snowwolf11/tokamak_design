@@ -45,19 +45,65 @@ free_boundary:
   detect_wall_intersections: true
 
 coil_fit:
-  # Inverse problem regularization / constraints
-  method: "contour_qp"               # "ridge" or "contour" or "contour_qp"
-  reg_lambda: 1.0e-6            # regularization strength (tune)
-  weight_by_coil_limits: true   # W ~ 1/Imax^2 in penalty term
+  method: "contour_qp"          # boundary_value | contour | contour_qp  (fit type; contour_qp recommended)
+  reg_lambda: 1.0e-6            # ridge strength (bigger -> smaller currents, worse fit)
+  boundary_fit_points: 180      # int | null  (downsample boundary for speed/robustness)
+  weight_by_coil_limits: true   # true/false  (solve in x=I/Imax for fair scaling)
+  enforce_bounds: true          # true/false  (enforce |x|<=1 or |I|<=Imax)
+  bounds_method: "active_set"   # metadata only (stored for provenance)
 
-  # Fit points
-  boundary_fit_points: 180      # use fewer points than full boundary polyline
-  psi_ref: 1.0
+  psi_ref: 1.0                  # float (contour methods: enforce mean(psi_boundary)=psi_ref; avoid trivial I=0)
+  constraint: "mean"            # mean  (contour constraint type; v1 supports "mean")
 
-  # Bounds handling
-  enforce_bounds: True
-  bounds_method: "clip_then_refit"  # simple v1; later active-set
-  constraint: "mean"
+  optimize_positions:
+    enabled: true              # true/false (outer loop moves coil centers to improve fit)
+    movable_coils: "pf_only"    # pf_only | all | none | [ "PF1", "PF2", ... ] (which coils may move)
+
+    R_bounds: [0.4, 3.0]        # [min,max] m (global fallback bounds for movable coil R)
+    Z_bounds: [-2.0, 2.0]       # [min,max] m (global fallback bounds for movable coil Z)
+    per_coil_bounds:
+      PF1U:
+        R: [0.55, 1.55]         # Rc = 1.05 ± 0.5
+        Z: [0.60, 1.60]         # Zc = 1.10 ± 0.5
+
+      PF1L:
+        R: [0.45, 1.45]         # Rc = 0.95 ± 0.2
+        Z: [-0.90, 0.10]       # Zc = -0.40 ± 0.2
+
+      PF2U:
+        R: [1.2, 2.20]         # Rc = 1.70 ± 0.2
+        Z: [0.60, 1.60]         # Zc = 1.10 ± 0.2
+
+      PF2L:
+        R: [1.0, 2.00]         # Rc = 1.50 ± 0.2
+        Z: [-1.55, -0.55]       # Zc = -1.05 ± 0.2
+
+      PF3U:
+        R: [1.90, 2.90]         # Rc = 2.40 ± 0.2
+        Z: [-0.10, 0.90]         # Zc = 0.40 ± 0.2
+
+      PF3L:
+        R: [1.90, 2.90]         # Rc = 2.40 ± 0.2
+        Z: [-0.90, 0.10]       # Zc = -0.40 ± 0.2
+
+      PF4:
+        R: [0.45, 1.45]         # Rc = 0.95 ± 0.2
+        Z: [-0.10, 0.90]         # Zc = 0.40 ± 0.2
+
+
+    max_iter: 3                # int (DE generations; more -> better, slower)
+    population: 16              # int (DE popsize factor; more exploration, slower)
+    seed: 0                     # int (reproducible randomness)
+    polish: true                # true/false (final local refinement)
+
+    psi_ref: 1.0                # float | omit (optional override used during position search)
+    constraint: "mean"          # mean | omit (optional override used during position search)
+
+    objective:
+      w_contour: 1.0            # weight for contour_rms (main shape metric; lower better)
+      w_xnorm: 0.0002             # weight for ||x||^2 (penalize large currents / authority use)
+      w_clamp: 2.0              # weight for clamp count (penalize hitting bounds)
+      w_move: 0.03               # weight for mean displacement^2 (penalize moving coils too far)
 
 numerics:
   # Differencing choices
