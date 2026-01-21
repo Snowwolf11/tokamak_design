@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 00_init_run.py
-============== test
+============== test test
 
 Initialize a new "run" directory and a fresh results.h5 file.
 
