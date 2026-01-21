@@ -1,0 +1,880 @@
+tokdesign.physics.metrics — scalar metric guide (stability + engineering + implementation + typical ranges)
+================================================================================
+
+Scope / caveats
+---------------
+This file computes “Stage-01” engineering proxies from a fixed-boundary Grad–Shafranov solution.
+Many definitions are *not* rigorous flux-surface averages; they’re robust, cheap signals for early
+design/optimization. Treat the “typical ranges” below as order-of-magnitude guidance, not hard limits.
+
+Conventions used by this code
+-----------------------------
+- Plasma region: points inside the LCFS polygon (point-in-polygon mask).
+- Grid cell area: dA = dR * dZ.
+- Toroidal volume element per cell (approx): dV = 2π R dA.
+- Volume average of x: <x>_V = Σ(x dV) / Σ(dV).
+- psi_bar ≡ ψ̄ is normalized poloidal flux in [0,1]. A proxy radius is ρ ≈ sqrt(ψ̄).
+
+For each metric below:
+- What: meaning / definition.
+- Stability importance: how it relates to MHD / transport stability signals.
+- Engineering / feasibility: operational or hardware constraints it tends to stress.
+- Typical region + better direction: common design space guidance and whether higher/lower is generally preferred.
+- Implemented here: exact proxy formula used in this code.
+
+--------------------------------------------------------------------------------
+GEOMETRY / SHAPE
+--------------------------------------------------------------------------------
+
+kappa  (elongation, κ)
+----------------------
+What:
+  Plasma elongation. Roughly vertical half-size divided by horizontal half-size.
+
+Stability importance:
+  Higher κ can improve ideal MHD pressure limits (often enabling higher β at fixed size),
+  but it also strengthens vertical instability drive and can increase control difficulty.
+
+Engineering / feasibility:
+  Higher κ typically demands stronger vertical position control, faster feedback, and can
+  raise divertor/first-wall shaping complexity.
+
+Typical region + better direction:
+  Typical: κ ~ 1.4–2.2 for many tokamak designs (more extreme concepts can go higher).
+  Better: “higher is better” for β capability *until* vertical stability/control limits dominate.
+
+Implemented here:
+  From LCFS polygon extrema:
+    Rmax = max(R), Rmin = min(R), Zmax = max(Z), Zmin = min(Z)
+    a = (Rmax - Rmin)/2
+    kappa = (Zmax - Zmin) / (2a)
+
+
+delta  (triangularity, δ)
+-------------------------
+What:
+  Average triangularity (D-shape measure).
+
+Stability importance:
+  Increased δ often improves ideal MHD stability and can support higher edge pressure / pedestal.
+  It also modifies edge stability boundaries.
+
+Engineering / feasibility:
+  Higher δ can complicate coil and vessel geometry, may tighten divertor geometry constraints,
+  and can increase sensitivity to plasma-wall clearance.
+
+Typical region + better direction:
+  Typical: δ ~ 0.2–0.6 (upper/lower may differ in advanced shapes).
+  Better: moderate-to-high δ often beneficial for performance, but too high can stress engineering/clearance.
+
+Implemented here:
+  Geometric center:
+    R0 = (Rmax + Rmin)/2, a = (Rmax - Rmin)/2
+  Use top/bottom boundary points:
+    i_top = argmax(Z), i_bot = argmin(Z)
+    R_top = R[i_top], R_bot = R[i_bot]
+    δ_u = (R0 - R_top)/a
+    δ_l = (R0 - R_bot)/a
+    delta = 0.5*(δ_u + δ_l)
+
+
+aspect_ratio  (A = R0/a)
+------------------------
+What:
+  Aspect ratio A = major radius / minor radius.
+
+Stability importance:
+  A influences global equilibrium, shaping effectiveness, q profile scalings, bootstrap fraction,
+  and many MHD limits. Lower A can be compact but changes stability and operational space.
+
+Engineering / feasibility:
+  Lower A often means tighter inboard space for TF coils, shielding, blanket, and maintenance.
+  Higher A gives more inboard room but increases machine size/cost for fixed minor radius.
+
+Typical region + better direction:
+  Typical: A ~ 2.5–4.0 (spherical tokamaks lower; conventional higher).
+  Better: “lower” can be attractive for compactness, but engineering often prefers not too low.
+
+Implemented here:
+  From LCFS geometry:
+    R0_geom = (Rmax + Rmin)/2
+    a_geom  = (Rmax - Rmin)/2
+    aspect_ratio = R0_geom / a_geom
+
+
+shafranov_shift  (ΔR axis shift proxy)
+--------------------------------------
+What:
+  Radial shift of magnetic axis relative to geometric center (proxy for Shafranov shift).
+
+Stability importance:
+  Large outward shift correlates with higher pressure/current effects; can be associated with
+  proximity to pressure-driven limits depending on profiles and shaping.
+
+Engineering / feasibility:
+  Large shifts reduce plasma-wall clearance on outboard side and can create strike-point/control issues.
+  It can also change coil requirements for position control.
+
+Typical region + better direction:
+  Typical: |ΔR| ~ 0.0–0.3 a (order of magnitude; device-dependent).
+  Better: smaller magnitude is generally easier for clearance/control, but some shift is normal at finite β.
+
+Implemented here:
+  Axis estimated as max(ψ) inside plasma:
+    (axis_R, axis_Z) = argmax(psi on plasma_mask)
+  shafranov_shift = axis_R - R0_geom
+
+--------------------------------------------------------------------------------
+GLOBAL SIZE / CONTENT
+--------------------------------------------------------------------------------
+
+volume  (toroidal plasma volume, V)
+-----------------------------------
+What:
+  Approximate toroidal plasma volume.
+
+Stability importance:
+  Not directly a stability metric, but sets scales for stored energy and power density
+  that interact with stability limits (e.g., for given β, larger V means more total energy).
+
+Engineering / feasibility:
+  Bigger volume usually means bigger machine: higher cost, larger coils, larger cryostat,
+  more structural loads; but lower power density demands can ease some components.
+
+Typical region + better direction:
+  Highly design-dependent. No universal “best.”
+  Better: depends on constraints; often “as small as possible” subject to performance/stability margins.
+
+Implemented here:
+  V = Σ_plasma (2π R dA)
+
+
+poloidal_flux  (Φp proxy)
+-------------------------
+What:
+  Proxy for total poloidal flux content.
+
+Stability importance:
+  Related to poloidal field / current and thus q profile and kink/tearing susceptibility indirectly.
+
+Engineering / feasibility:
+  Larger required flux swing can stress PF coil capability and power supply needs.
+
+Typical region + better direction:
+  Device- and scenario-dependent; not a universal scalar target.
+  Better: “enough” to meet q/Ip requirements without excessive coil demands.
+
+Implemented here:
+  poloidal_flux = |psi_lcfs - psi_axis| * 2π
+
+
+stored_energy  (W)
+------------------
+What:
+  Thermal stored energy W ≈ (3/2) ∫ p dV.
+
+Stability importance:
+  W links to β. Higher W at fixed B increases pressure-driven instability drive
+  and can move operation toward ballooning/kink limits.
+
+Engineering / feasibility:
+  Higher W increases consequence/severity of disruptions and demands stronger
+  plasma-facing component resilience and protection systems.
+
+Typical region + better direction:
+  Strongly dependent on device size and mission. No universal range.
+  Better: higher is good for performance *if* stability and disruption risk are controlled.
+
+Implemented here:
+  stored_energy = 1.5 * Σ_plasma (p dV)
+
+--------------------------------------------------------------------------------
+FIELD / CURRENT
+--------------------------------------------------------------------------------
+
+B0  (reference toroidal field)
+------------------------------
+What:
+  Toroidal field magnitude near the magnetic axis (or a configured reference value).
+
+Stability importance:
+  Higher B0 reduces β for the same pressure and generally improves MHD margins
+  by increasing magnetic pressure and Alfvén speed.
+
+Engineering / feasibility:
+  Higher B0 drives higher TF coil stress, stored magnetic energy, cryogenic load,
+  and can increase cost/complexity.
+
+Typical region + better direction:
+  Typical: ~1–7 T (wide range; compact high-field concepts can be higher).
+  Better: higher B0 improves physics margins but worsens engineering burden.
+
+Implemented here:
+  Prefer controls["toroidal_field"]["B0"].
+  Else sample Bphi in a small neighborhood around (axis_R, axis_Z):
+    B0 = median(Bphi within ~2 grid cells of axis, inside plasma mask)
+
+
+I_t  (total plasma current, Ip)
+-------------------------------
+What:
+  Total toroidal plasma current.
+
+Stability importance:
+  Ip strongly shapes q(ρ). Too low Ip can raise q; too high can drive q down and
+  trigger low-q MHD (kink/tearing), depending on profiles.
+
+Engineering / feasibility:
+  Higher Ip requires stronger PF/CS systems (inductive scenarios), increases disruption forces,
+  and can increase heat loads during transients.
+
+Typical region + better direction:
+  Typical: ~0.5–15 MA (very device dependent).
+  Better: “as low as possible” while meeting confinement/q/βN goals and avoiding too-high q edge.
+
+Implemented here:
+  Prefer controls["enforcement"]["I_t"].
+  Else cross-section integral:
+    I_t = Σ_plasma (j_phi dA)
+  (Note: cross-section integral is the standard way to get Ip from jφ.)
+
+
+li  (internal inductance proxy)
+------------------------------
+What:
+  Proxy for internal inductance, related to current/poloidal-field peaking.
+
+Stability importance:
+  Higher li often indicates more peaked current and can worsen kink stability margins
+  and impact sawtooth/tearing behavior through q profile shaping.
+
+Engineering / feasibility:
+  High peaking can complicate scenario control; in inductive plasmas it can be tied to
+  current diffusion and actuator requirements.
+
+Typical region + better direction:
+  Typical: li ~ 0.6–1.3 (order-of-magnitude for many discharges; definition-dependent).
+  Better: moderate is often preferred; too high can be risky for MHD, too low can indicate hollow/current issues.
+
+Implemented here (rough, robust proxy):
+  Bp = sqrt(BR^2 + BZ^2)
+  Bp_edge = percentile_90(Bp where psi_bar >= 0.9 and inside plasma)
+  <Bp^2>_V = volume average of (BR^2 + BZ^2)
+  li ≈ 2 * <Bp^2>_V / (Bp_edge^2)
+
+--------------------------------------------------------------------------------
+BETA METRICS (pressure vs magnetic field)
+--------------------------------------------------------------------------------
+
+beta  (volume-averaged β)
+-------------------------
+What:
+  β = (plasma pressure) / (magnetic pressure), volume averaged.
+
+Stability importance:
+  Key driver for pressure-driven MHD (ballooning, kink). Higher β tends to reduce
+  stability margin unless compensated by shaping, shear, profiles, and wall stabilization.
+
+Engineering / feasibility:
+  Higher β can reduce required B for given pressure (good) but raises disruption energy
+  and can stress control/protection systems.
+
+Typical region + better direction:
+  Typical: β ~ 1%–6% in many tokamaks (advanced scenarios can be higher).
+  Better: higher is better for fusion performance, but limited by MHD/disruption risk.
+
+Implemented here:
+  <p>_V = Σ(p dV)/Σ(dV)
+  <B^2>_V = Σ((BR^2+BZ^2+Bphi^2) dV)/Σ(dV)
+  beta = (2 μ0 <p>_V) / <B^2>_V
+
+
+beta_p  (poloidal beta)
+-----------------------
+What:
+  βp = pressure normalized by poloidal magnetic field energy.
+
+Stability importance:
+  Relates to current profile and shaping; often used with li and q to characterize equilibrium.
+  High βp can indicate strong pressure relative to poloidal field, affecting stability.
+
+Engineering / feasibility:
+  High βp often implies high bootstrap fraction or strong gradients, which can stress scenario control.
+
+Typical region + better direction:
+  Typical: βp ~ 0.2–2 (very scenario dependent).
+  Better: not monotonic; moderate values are often desirable. Extremely high can be challenging.
+
+Implemented here:
+  <Bp^2>_V = Σ((BR^2+BZ^2) dV)/Σ(dV)
+  beta_p = (2 μ0 <p>_V) / <Bp^2>_V
+
+
+beta_N  (normalized beta)
+-------------------------
+What:
+  Common tokamak figure: βN = β(%) * a(m) * BT(T) / Ip(MA).
+
+Stability importance:
+  Empirically correlates with global ideal MHD limits; higher βN generally pushes toward
+  no-wall/wall kink boundaries depending on rotation, wall proximity, profiles.
+
+Engineering / feasibility:
+  High βN often means high performance but can increase disruption likelihood and demands on
+  stability control (RWM control, profile control).
+
+Typical region + better direction:
+  Typical: βN ~ 1–3 in many regimes; advanced scenarios can reach ~3–4+.
+  Better: higher is better for performance but limited by MHD/control capability.
+
+Implemented here:
+  beta_N = 100*beta * a_geom * |B0| / (|I_t|/1e6)
+  (uses a from LCFS, B0 reference, Ip in MA)
+
+--------------------------------------------------------------------------------
+SAFETY FACTOR q METRICS
+--------------------------------------------------------------------------------
+
+q0  (core safety factor)
+------------------------
+What:
+  Safety factor near axis.
+
+Stability importance:
+  q0 < 1 strongly associated with internal kink / sawteeth; very low q0 can be risky.
+  q0 also affects core tearing stability and overall q-profile character.
+
+Engineering / feasibility:
+  Indirect: avoiding low q0 often requires profile/current drive control capability.
+
+Typical region + better direction:
+  Typical: q0 ~ 0.8–2.0 depending on scenario.
+  Better: for steady/sawtooth-avoiding operation often q0 ≳ 1; but some regimes tolerate <1 with control.
+
+Implemented here:
+  q0 = median(q where psi_bar <= 0.02)
+  fallback if empty: median(q where psi_bar <= 0.05)
+
+
+q95  (edge safety factor)
+-------------------------
+What:
+  Safety factor around 95% flux surface.
+
+Stability importance:
+  Strong operational indicator for external kink/edge stability; certain q95 windows
+  can be more stable depending on profiles and wall.
+
+Engineering / feasibility:
+  q95 is controlled via Ip and shaping; achieving a target q95 ties into coil power and current drive needs.
+
+Typical region + better direction:
+  Typical: q95 ~ 2.5–6 (device/regime dependent).
+  Better: not strictly monotonic; too low risks kink, too high implies low Ip (may hurt confinement/operation).
+
+Implemented here:
+  q95 = median(q where 0.93 <= psi_bar <= 0.97)
+  fallback: percentile_95(q_plasma)
+
+
+q_min  (minimum q)
+------------------
+What:
+  Minimum q across plasma.
+
+Stability importance:
+  Low q_min increases risk of low-order rational surfaces and tearing/kink activity.
+  Reversed-shear scenarios deliberately shape q_min, but it must be managed.
+
+Engineering / feasibility:
+  Indirect via need for current profile control and diagnostics/actuators.
+
+Typical region + better direction:
+  Typical: q_min ~ 1–3 (scenario dependent).
+  Better: generally avoid q_min too close to 1 unless specifically targeting a controlled regime.
+
+Implemented here:
+  q_min = min(q_plasma)
+
+
+rho_qmin  (location of q_min)
+-----------------------------
+What:
+  Radial location of q_min mapped to ρ ≈ sqrt(ψ̄).
+
+Stability importance:
+  Where q_min sits controls where reversed shear and rational surfaces occur (affects tearing and ITB behavior).
+
+Engineering / feasibility:
+  Indirect: moving q_min often requires off-axis current drive capability.
+
+Typical region + better direction:
+  Typical: ρ_qmin ~ 0.2–0.8 (if present); monotonic q has q_min at core.
+  Better: scenario-dependent; reversed-shear often wants q_min off-axis but not too near the edge.
+
+Implemented here:
+  i_min = argmin(q_plasma)
+  rho_qmin = sqrt(clamp(psi_bar[i_min], 0, 1))
+
+
+low_q_volume_fraction  (fraction with q < 1)
+--------------------------------------------
+What:
+  Fraction of toroidal volume where q < 1.
+
+Stability importance:
+  Larger q<1 region tends to imply stronger internal kink drive and sawteeth risk.
+
+Engineering / feasibility:
+  Indirect; avoiding large q<1 often requires current profile control.
+
+Typical region + better direction:
+  Typical: near 0 in sawtooth-avoiding scenarios; can be nonzero in inductive plasmas.
+  Better: smaller is generally better for avoiding internal kink/sawteeth.
+
+Implemented here:
+  dV = 2π R dA
+  low_q_volume_fraction = Σ(dV where q<1) / Σ(dV)
+
+
+q_monotonicity_violation  (non-monotonicity proxy)
+--------------------------------------------------
+What:
+  Fraction of binned q(ψ̄) profile bins where dq/dψ̄ is significantly negative.
+
+Stability importance:
+  Negative dq/dψ̄ indicates reversed shear. This can be beneficial for transport (ITBs),
+  but can introduce double-tearing risks and altered MHD boundaries.
+
+Engineering / feasibility:
+  Sustaining reversed shear typically requires sophisticated current drive and profile control.
+
+Typical region + better direction:
+  Typical: ~0 for monotonic q. Reversed-shear scenarios: >0.
+  Better: depends on goals; if not explicitly targeting reversed shear, smaller is safer/simpler.
+
+Implemented here:
+  Build binned mean profile q_c vs pb_c with nbins=60.
+  dq = gradient(q_c, pb_c)
+  q_monotonicity_violation = mean(dq < -1e-4)
+
+
+q_smoothness  (profile smoothness proxy)
+----------------------------------------
+What:
+  RMS second derivative of binned q(ψ̄): a “roughness” penalty.
+
+Stability importance:
+  Highly jagged q can indicate numerical noise or pathological profiles that can trigger tearing
+  sensitivity or cause unreliable stability assessments.
+
+Engineering / feasibility:
+  Indirect; smooth profiles are easier to control and model.
+
+Typical region + better direction:
+  Typical: “as low as possible” (near 0 for very smooth profiles).
+  Better: lower is better.
+
+Implemented here:
+  dq  = gradient(q_c, pb_c)
+  d2q = gradient(dq, pb_c)
+  q_smoothness = sqrt(mean(d2q^2))
+
+
+q_rational_proximity  (edge rational closeness)
+-----------------------------------------------
+What:
+  Distance of q95 to common low-order rationals [1, 1.5, 2, 2.5, 3].
+
+Stability importance:
+  Being very close to low-order rationals can correlate with resonant MHD sensitivity
+  (context-dependent; can matter for locked modes / edge resonances).
+
+Engineering / feasibility:
+  Avoiding certain q95 windows can constrain operating space and required Ip/BT settings.
+
+Typical region + better direction:
+  Typical: not “targeted” universally; used as a heuristic.
+  Better: larger distance can be safer (less resonance risk), but operation often crosses rationals anyway.
+
+Implemented here:
+  q_edge = q95
+  q_rational_proximity = min(|q_edge - r| for r in [1,1.5,2,2.5,3])
+
+--------------------------------------------------------------------------------
+MAGNETIC SHEAR s METRICS
+--------------------------------------------------------------------------------
+
+s_edge_mean
+-----------
+What:
+  Mean magnetic shear in edge band (psi_bar >= 0.8).
+
+Stability importance:
+  Edge shear influences ballooning/peeling stability and pedestal structure.
+
+Engineering / feasibility:
+  Indirect; controlling edge shear may require shaping and current drive, affecting coil and actuator needs.
+
+Typical region + better direction:
+  Typical: order ~0–5 (definition-dependent).
+  Better: not strictly monotonic; very low/negative can be good or bad depending on mode class.
+  In many “conventional” cases, moderately positive edge shear is preferred.
+
+Implemented here:
+  s_edge_mean = mean(s where psi_bar >= 0.8 and inside plasma)
+
+
+s_edge_min
+----------
+What:
+  Minimum shear in edge band.
+
+Stability importance:
+  Captures whether edge shear drops low or negative, which can alter edge stability boundary.
+
+Engineering / feasibility:
+  Indirect; strongly negative edge shear may require advanced profile control.
+
+Typical region + better direction:
+  Typical: slightly positive, but can be near zero; negative in special scenarios.
+  Better: depends on scenario; for conservative design, avoid large negative values.
+
+Implemented here:
+  s_edge_min = min(s where psi_bar >= 0.8 and inside plasma)
+
+
+s_min, s_max
+------------
+What:
+  Global min and max shear in plasma.
+
+Stability importance:
+  s_min < 0 indicates reversed shear; very large s_max indicates sharp shear layers.
+
+Engineering / feasibility:
+  Strong shear structure may require profile control; extreme gradients can be hard to sustain.
+
+Typical region + better direction:
+  Typical: order ~(-1) to 10 (definition-dependent).
+  Better: avoid extreme magnitudes unless deliberately designing for shear layers/ITBs.
+
+Implemented here:
+  s_min = min(s_plasma)
+  s_max = max(s_plasma)
+
+
+negative_shear_extent
+---------------------
+What:
+  Fraction of plasma points with s < 0 (unweighted).
+
+Stability importance:
+  Quantifies how much reversed shear exists; relevant for double-tearing risk and ITB regimes.
+
+Engineering / feasibility:
+  Larger extent generally implies more advanced control requirements.
+
+Typical region + better direction:
+  Typical: ~0 for monotonic shear; >0 for reversed-shear designs.
+  Better: if not targeting reversed shear, smaller is better.
+
+Implemented here:
+  negative_shear_extent = mean(s_plasma < 0)
+
+
+shear_smoothness
+----------------
+What:
+  RMS second derivative of binned s(ψ̄) profile: a roughness/noise penalty.
+
+Stability importance:
+  Non-smooth shear can create localized stability drive and can indicate numerical artifacts.
+
+Engineering / feasibility:
+  Smooth profiles are easier to model/control and less sensitive.
+
+Typical region + better direction:
+  Typical: near 0 for smooth profiles.
+  Better: lower is better.
+
+Implemented here:
+  Bin mean s_c vs pb_c (nbins=60)
+  ds  = gradient(s_c, pb_c)
+  d2s = gradient(ds, pb_c)
+  shear_smoothness = sqrt(mean(d2s^2))
+
+--------------------------------------------------------------------------------
+ALPHA (pressure-gradient drive proxy) + s–α margin proxies
+--------------------------------------------------------------------------------
+
+Background:
+  This code assumes arrays alpha and s are provided.
+  It uses a simple margin proxy:
+    margin = s - alpha
+  This is NOT a rigorous ballooning stability boundary, but it is monotone, cheap, robust.
+
+alpha_edge_mean
+---------------
+What:
+  Mean alpha in edge band (psi_bar >= 0.8).
+
+Stability importance:
+  Higher edge alpha indicates stronger pressure-gradient drive; correlates with ballooning risk.
+
+Engineering / feasibility:
+  High edge gradients imply higher heat/particle fluxes and can stress divertor and PFC limits,
+  and may require advanced pedestal control.
+
+Typical region + better direction:
+  Strongly definition- and normalization-dependent; use relative comparisons in optimization.
+  Better: generally lower is safer for pressure-driven stability unless compensated by shear/shaping.
+
+Implemented here:
+  alpha_edge_mean = mean(alpha where psi_bar >= 0.8)
+
+
+alpha_edge_p95
+--------------
+What:
+  95th percentile alpha in edge band.
+
+Stability importance:
+  Captures localized high-drive regions even if mean is moderate.
+
+Engineering / feasibility:
+  Localized steep gradients can correspond to localized power exhaust challenges and stability sensitivity.
+
+Typical region + better direction:
+  Definition-dependent; treat as “keep below threshold” within your design family.
+  Better: lower is generally better (less drive).
+
+Implemented here:
+  alpha_edge_p95 = percentile_95(alpha_edge)
+
+
+alpha_edge_integral
+-------------------
+What:
+  Edge integral of alpha weighted by dV.
+
+Stability importance:
+  Proxy for total “amount” of pressure-gradient drive in edge volume.
+
+Engineering / feasibility:
+  A large integrated edge drive often correlates with strong pedestal gradients (PFC/divertor stress).
+
+Typical region + better direction:
+  Not universal; compare between designs.
+  Better: smaller is generally safer, but performance may demand some edge drive.
+
+Implemented here:
+  dV = 2π R dA
+  alpha_edge_integral = Σ(alpha_edge * dV_edge)
+
+
+s_alpha_margin_min
+------------------
+What:
+  Minimum of (s - alpha) in edge band.
+
+Stability importance:
+  If negative, indicates regions where alpha exceeds shear in this proxy → “bad margin”
+  (potential ballooning-like risk signal).
+
+Engineering / feasibility:
+  Negative margin implies you may need more shaping/current drive/pedestal control, which stresses actuators.
+
+Typical region + better direction:
+  Typical: aim for >= 0 in conservative design (proxy).
+  Better: higher (more positive) is better.
+
+Implemented here:
+  margin = s - alpha
+  s_alpha_margin_min = min(margin where psi_bar >= 0.8)
+
+
+s_alpha_negative_margin_integral
+--------------------------------
+What:
+  Volume-weighted integral of negative margin amount in edge band:
+    ∫ max(0, -(s-alpha)) dV
+
+Stability importance:
+  Penalizes not just the worst point but the extent of negative margin → robust instability risk proxy.
+
+Engineering / feasibility:
+  Large values suggest broader regions needing stabilization/control, increasing actuator/engineering demands.
+
+Typical region + better direction:
+  Typical: 0 in conservative cases.
+  Better: lower is better; ideally 0.
+
+Implemented here:
+  neg = max(0, -margin_edge)
+  s_alpha_negative_margin_integral = Σ(neg * dV_edge)
+  (Also clamps any non-finite outputs to 0.0 for Stage01 finiteness.)
+
+
+--------------------------------------------------------------------------------
+PRESSURE PROFILE METRICS (p)
+--------------------------------------------------------------------------------
+
+p_peaking_factor
+----------------
+What:
+  Pressure peaking: p_axis / <p>_V.
+
+Stability importance:
+  High peaking increases core gradients and can impact core MHD (sawteeth, tearing) indirectly
+  via bootstrap/current and pressure drive.
+
+Engineering / feasibility:
+  Strong peaking can make scenario control harder; also may concentrate heat loads if it couples to transport events.
+
+Typical region + better direction:
+  Typical: ~1–3 (very broad; depends on regime).
+  Better: moderate; too high can be risky for stability/control, too low may indicate weak core pressure.
+
+Implemented here:
+  <p>_V = Σ(p dV)/Σ(dV)
+  p_axis ≈ percentile_95(p where psi_bar <= 0.02) else max(p)
+  p_peaking_factor = p_axis / (<p>_V + ε)
+
+
+dpdrho_max
+----------
+What:
+  Maximum absolute gradient |dp/dρ| of the binned mean profile, with ρ = sqrt(ψ̄).
+
+Stability importance:
+  Large gradients drive pressure-gradient instabilities (especially near edge if gradient peaks there).
+
+Engineering / feasibility:
+  Large edge gradients correlate with high pedestal pressure and can stress divertor/PFC power exhaust.
+  Large core gradients can increase transient event severity if transport collapses.
+
+Typical region + better direction:
+  Units/normalization depend on how p is normalized upstream. Use relative comparisons.
+  Better: lower is safer for stability; performance pushes it up, so treat as a constrained objective.
+
+Implemented here:
+  Bin mean p_c vs pb_c (nbins=80)
+  rho_c = sqrt(pb_c)
+  dp/drho = gradient(p_c, rho_c)
+  dpdrho_max = max(|dp/drho|)
+
+
+edge_pressure_gradient_integral
+-------------------------------
+What:
+  Integral of the *negative* pressure gradient near edge (ρ >= 0.8):
+    ∫_{ρ>=0.8} max(0, -dp/dρ) dρ
+
+Stability importance:
+  Proxy for how much outward-decreasing pressure gradient exists at edge, related to pedestal drive.
+
+Engineering / feasibility:
+  Strong edge gradients imply higher edge power/particle flux and narrower SOL widths in some regimes,
+  stressing divertor design and operational limits.
+
+Typical region + better direction:
+  Not universal; compare within a design family.
+  Better: lower is safer; but too low may mean weak pedestal/performance.
+
+Implemented here:
+  edge = (rho_c >= 0.8)
+  edge_pressure_gradient_integral = trapz(max(0, -dp/drho)[edge], rho_c[edge])
+
+--------------------------------------------------------------------------------
+CURRENT PROFILE METRICS (j_phi)
+--------------------------------------------------------------------------------
+
+j_peaking_factor
+----------------
+What:
+  Current density peaking: j_axis / <j>_V (using toroidal volume weighting).
+
+Stability importance:
+  Strong current peaking tends to reduce central q and modify shear, raising risk of internal kink/tearing.
+
+Engineering / feasibility:
+  Maintaining a desired j profile may require current drive actuators and can constrain operational space.
+
+Typical region + better direction:
+  Typical: ~1–3 (very broad; depends on scenario and normalization).
+  Better: moderate; too high can be risky for MHD, too low might indicate hollow/off-axis current.
+
+Implemented here:
+  <j>_V = Σ(j dV)/Σ(dV)
+  j_axis ≈ percentile_95(j where psi_bar <= 0.02) else max(j)
+  j_peaking_factor = j_axis / (<j>_V + ε)
+
+
+current_centroid_shift
+----------------------
+What:
+  Radial shift of the centroid of *positive* j_phi relative to geometric center R0_geom.
+
+Stability importance:
+  Off-axis current distribution shifts q and shear profiles; can be intentional (advanced scenarios)
+  but can also correlate with asymmetry and tearing sensitivity.
+
+Engineering / feasibility:
+  Off-axis current usually needs external current drive (NBI/ECCD/LHCD) and profile control,
+  increasing system complexity and power requirements.
+
+Typical region + better direction:
+  Typical: near 0 (centered), with advanced scenarios allowing noticeable shifts.
+  Better: for conservative design, closer to 0 is simpler; nonzero can be good if intentionally shaping q.
+
+Implemented here (cross-section centroid):
+  w = max(j_phi, 0) * dA
+  R_centroid = Σ(R * w) / Σ(w)
+  current_centroid_shift = R_centroid - R0_geom
+  (Returns NaN if Σ(w) <= 0)
+
+
+--------------------------------------------------------------------------------
+SOLVER DIAGNOSTICS (extra outputs)
+--------------------------------------------------------------------------------
+
+gs_iterations
+-------------
+What:
+  GS solver iteration count passed in.
+
+Stability importance:
+  Not a physics stability metric; indicates equilibrium solve effort and potential convergence issues.
+
+Engineering / feasibility:
+  None directly; but slow convergence affects optimization runtime and reliability.
+
+Typical region + better direction:
+  Lower is generally better (faster), but only meaningful alongside residual_norm.
+
+Implemented here:
+  gs_iterations = float(input gs_iterations)
+
+
+residual_norm
+-------------
+What:
+  Norm of GS residual passed in.
+
+Stability importance:
+  Not a physics stability metric; indicates whether equilibrium solution is trustworthy.
+
+Engineering / feasibility:
+  None directly; but poor residual can invalidate downstream engineering/stability assessments.
+
+Typical region + better direction:
+  Should be “small” relative to the solver’s expected tolerance; lower is better.
+  (No universal absolute number without knowing solver definition.)
+
+Implemented here:
+  residual_norm = float(input residual_norm)
+
+--------------------------------------------------------------------------------
+End of metric guide
+--------------------------------------------------------------------------------
