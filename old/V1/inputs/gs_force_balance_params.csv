@@ -1,0 +1,31 @@
+# domain
+Rmin,0.7
+Rmax,3.4
+Zmin,-2.6
+Zmax,2.6
+NR,257
+NZ,257
+
+# TF model (only for plotting comparison)
+TF_R0,1.65
+TF_B0,2.5
+
+# step-3 closure: define psi_sep at a reference point
+R_ref,3.25
+Z_ref,0.0
+
+# profiles
+p0,15000
+alpha_p,1.5
+F0,4.5
+deltaF,0.12
+betaF,1.0
+
+# iteration
+max_iter,60
+tol_rel,2e-4
+relax,0.6
+
+# X-point
+#XPOINT_PREFER,lower
+XPOINT_GRAD_TOL_FRAC,5e-3

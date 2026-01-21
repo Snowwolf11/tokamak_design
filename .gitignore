@@ -1,0 +1,17 @@
+# Ignore all run outputs / data
+old/V1/runs/
+old/V2/data/
+data/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.DS_Store

@@ -1,0 +1,308 @@
+Stage-1 Equilibrium Optimization
+Mathematical Formulation (Conceptual Design Document)
+
+This document describes the complete mathematical formulation of the
+Stage-1 optimization problem for tokamak equilibrium target design.
+It is independent of implementation details, optimizers, or config formats.
+Its purpose is to define clearly:
+
+- decision variables (controls)
+- state equation
+- feasibility conditions
+- constraints g_i(x)
+- objective function f(x)
+
+Engineering / PF realizability checks are explicitly excluded at this stage.
+
+======================================================================
+1. Decision Variables (Controls)
+======================================================================
+
+Let x ∈ ℝⁿ be the vector of Stage-1 control variables, including:
+
+- Plasma boundary parameters:
+  R0, a, κ, δ, Z0, (later X-point parameters)
+
+- Global equilibrium parameters:
+  I_t  (toroidal plasma current, enforced per GS solve)
+  B0   (reference toroidal field)
+  R_ref (reference radius for Bφ definition)
+
+- Profile shape parameters (scalars only):
+  pressure parameters (e.g. p0, α_p)
+  toroidal-field / current profile parameters (e.g. α_F)
+
+All controls are scalars; no continuous profile optimization is performed.
+
+======================================================================
+2. State Equation (Fixed-Boundary GS Problem)
+======================================================================
+
+Given x, define the plasma domain Ω(x) by the prescribed LCFS.
+
+Solve the Grad–Shafranov equation for ψ(R,Z):
+
+  Δ*ψ = −μ₀ R² dp/dψ − (1/2) d(F²)/dψ     in Ω(x)
+
+with boundary condition:
+  ψ = ψ_lcfs   on ∂Ω(x)
+
+and with an enforcement condition (closure):
+
+  ∫_Ω jφ(ψ;x) dA = I_t(x)
+
+This enforcement removes the normalization degeneracy of the GS equation.
+
+The solution ψ(x) defines the equilibrium state.
+
+======================================================================
+3. Feasibility Gates (Tier-0 Conditions)
+======================================================================
+
+These are hard validity conditions.
+If any fail, the candidate x is infeasible and must be rejected.
+
+Boolean feasibility predicate C(x):
+
+- GS solver converged
+- LCFS exists and is closed
+- Magnetic axis exists inside LCFS
+- LCFS fully inside computational domain
+- Geometry validity:
+    no self-intersections
+    positive minor radius
+    physically sensible shape
+- Profile validity:
+    pressure ≥ 0
+    finite dp/dψ
+    no NaNs or singularities
+
+These are not soft penalties and are not part of f(x).
+
+======================================================================
+4. Constraints g_i(x) ≤ 0
+======================================================================
+
+These are physics constraints that must be satisfied in Stage-1.
+
+------------------------------------------------------
+4.1 Safety-factor constraints
+------------------------------------------------------
+
+Internal kink avoidance:
+  g_q0(x) = q0_min − q0(x) ≤ 0
+
+Edge safety factor:
+  g_q95(x) = q95_min − q95(x) ≤ 0
+
+Optional (if monotonic q is required):
+  g_mono(x) = ∫ max(0, −dq/dρ) dρ − ε_mono ≤ 0
+
+------------------------------------------------------
+4.2 Shape constraints
+------------------------------------------------------
+
+Elongation:
+  g_κ(x) = κ(x) − κ_max ≤ 0
+
+Triangularity:
+  g_δ(x) = δ(x) − δ_max ≤ 0
+
+------------------------------------------------------
+4.3 Beta / pressure caps
+------------------------------------------------------
+
+Normalized beta:
+  g_βN(x) = β_N(x) − β_N_max ≤ 0
+
+Optional:
+  g_βp(x) = β_p(x) − β_p_max ≤ 0
+
+------------------------------------------------------
+4.4 Optional hard shear / ballooning constraints
+------------------------------------------------------
+
+Minimum edge shear:
+  g_s_edge(x) = s_edge_min − min_{ρ∈[0.8,0.95]} s(ρ;x) ≤ 0
+
+Ballooning envelope:
+  g_ball(x) = −min_{ρ∈[0.8,0.95]}[α_crit(s) − α(ρ)] ≤ 0
+
+(These may initially be moved into the objective as soft penalties.)
+
+======================================================================
+5. Objective Function f(x)
+======================================================================
+
+The objective is a weighted sum of smooth penalty terms:
+
+  f(x) =
+    w_perf     J_perf(x)
+  + w_q        J_q(x)
+  + w_shear    J_s(x)
+  + w_alpha    J_alpha(x)
+  + w_prof     J_profiles(x)
+  + w_shape    J_shape(x)
+  + w_vert     J_vertical(x)
+  + w_reg      J_regularization(x)
+
+All terms are dimensionless and scaled.
+
+------------------------------------------------------
+Penalty primitives used throughout
+------------------------------------------------------
+
+Lower hinge (soft floor):
+  H_−(y; y_min, s) = max(0, (y_min − y)/s)²
+
+Upper hinge (soft cap):
+  H_+(y; y_max, s) = max(0, (y − y_max)/s)²
+
+Target penalty:
+  T(y; y*, s) = ((y − y*)/s)²
+
+Band penalty:
+  B(y; a, b, s) = H_−(y; a, s) + H_+(y; b, s)
+
+------------------------------------------------------
+5.1 Performance block J_perf
+------------------------------------------------------
+
+- Normalized beta target:
+  J_βN = T(β_N; β_N*, s_βN)
+
+- Stored energy (optional):
+  J_W = T(log W; log W*, s_W)
+
+- Total beta sanity band:
+  J_β = B(β; β_min, β_max, s_β)
+
+J_perf = J_βN + λ_W J_W + λ_β J_β
+
+------------------------------------------------------
+5.2 q-profile block J_q
+------------------------------------------------------
+
+- q0 comfort band:
+  J_q0 = B(q0; q0_soft_min, q0_soft_max, s_q0)
+
+- Low-q volume fraction:
+  J_Vq = H_+(V(q<2); V_max, s_V)
+
+- Rational surface proximity penalty:
+  J_rat = H_−(d_rat; d_min, s_d)
+
+- q-profile smoothness:
+  J_qsmooth = ∫ (d²q/dρ²)² dρ
+
+J_q = J_q0 + λ_V J_Vq + λ_rat J_rat + λ_qs J_qsmooth
+
+------------------------------------------------------
+5.3 Magnetic shear block J_s
+------------------------------------------------------
+
+- Edge shear soft floor:
+  J_s_edge = H_−(⟨s⟩_edge; s_edge_target, s_s)
+
+- Negative shear extent:
+  J_s_neg = (∫ max(0, −s(ρ)) dρ)²
+
+- Shear spike penalty:
+  J_s_max = H_+(s_max; s_max_soft, s_s)
+
+- Shear smoothness:
+  J_ssmooth = ∫ (d²s/dρ²)² dρ
+
+J_s = J_s_edge + λ_neg J_s_neg + λ_max J_s_max + λ_ss J_ssmooth
+
+------------------------------------------------------
+5.4 Ballooning / s–α block J_alpha
+------------------------------------------------------
+
+Define α(ρ) proxy and stability envelope α_crit(s).
+
+- Edge α cap:
+  J_α_edge = H_+(α_edge_95; α_max_soft, s_α)
+
+- Envelope violation integral:
+  J_env = ∫ max(0, (α − α_crit)/s_m)² dρ
+
+- Minimum margin preference:
+  J_minmargin = H_−(m_min; m_target, s_m)
+
+J_alpha = J_α_edge + λ_env J_env + λ_min J_minmargin
+
+------------------------------------------------------
+5.5 Pressure & current profile block J_profiles
+------------------------------------------------------
+
+Pressure:
+- Peaking factor:
+  J_p_peak = B(p(0)/⟨p⟩; p_min, p_max, s_p)
+
+- Edge gradient cap:
+  J_dp = H_+(max|dp/dρ|; dp_max, s_dp)
+
+Current:
+- Current peaking:
+  J_j_peak = B(j(0)/⟨j⟩; j_min, j_max, s_j)
+
+- Internal inductance:
+  J_li = T(li; li*, s_li)
+
+- Current centroid shift:
+  J_Rj = H_+(|ΔR_j|; ΔR_max, s_R)
+
+J_profiles = J_p_peak + J_dp + J_j_peak + J_li + J_Rj
+
+------------------------------------------------------
+5.6 Shape block J_shape
+------------------------------------------------------
+
+- Preferred elongation:
+  J_κ = T(κ; κ*, s_κ)
+
+- Preferred triangularity:
+  J_δ = T(δ; δ*, s_δ)
+
+- Shafranov shift:
+  J_Δ = H_+(Δ_Shaf; Δ_max_soft, s_Δ)
+
+- LCFS curvature extremes:
+  J_curv = H_+(κ_c,max; κ_c*, s_c)
+
+------------------------------------------------------
+5.7 Vertical stability proxy J_vertical
+------------------------------------------------------
+
+Empirical proxy using κ and li:
+  J_vert = H_+(κ · li; (κ li)_max, s_kl)
+or
+  J_vert = T(κ · li; (κ li)*, s_kl)
+
+------------------------------------------------------
+5.8 Regularization block J_reg
+------------------------------------------------------
+
+- Distance-to-bounds penalty for controls:
+  J_bounds = Σ_j ((x_j − mid_j)/range_j)²
+
+- Optional profile smoothness regularization
+
+======================================================================
+6. Complete Stage-1 Optimization Problem
+======================================================================
+
+Minimize:
+  f(x)
+
+Subject to:
+  - Feasibility gate C(x) = true
+  - Hard constraints g_i(x) ≤ 0
+
+This defines a finite-dimensional, PDE-constrained nonlinear optimization
+problem with a black-box state solve and metric-based objective.
+
+======================================================================
+End of document
+======================================================================

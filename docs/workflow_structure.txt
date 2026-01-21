@@ -1,0 +1,449 @@
+TOKAMAK DESIGN WORKFLOW
+=======================
+
+Workflow structure, philosophy, physics, and implementation notes
+Version: new workflow (equilibrium-first paradigm)
+Status: active development, v0.x
+
+
+------------------------------------------------------------------
+1. IDEA AND OVERALL GOAL
+------------------------------------------------------------------
+
+The goal of this project is to provide a structured, extensible, and
+physics-aware workflow for tokamak design.
+
+This is NOT just an equilibrium solver.
+
+The workflow is designed to:
+  • Start from high-level physics and stability objectives
+  • Find an optimal plasma equilibrium
+  • Then design a device (PF coils, vessel, etc.) that can realize it
+  • Finally refine the full system in a coupled optimization
+  • Store all results in a single, self-consistent data product
+
+The long-term vision is a pipeline that goes from:
+  desired plasma performance
+      → equilibrium
+      → device configuration
+      → physics analysis
+      → engineering-relevant outputs
+
+Target users include:
+  • researchers
+  • startups
+  • students
+  • anyone interested in tokamak design beyond single-purpose codes
+
+
+------------------------------------------------------------------
+2. CORE DESIGN PHILOSOPHY
+------------------------------------------------------------------
+
+2.1 Separation of concerns
+
+The codebase is strictly split into:
+
+  (A) Orchestrator scripts (scripts/)
+      - One script per stage (00, 01, 02, ...)
+      - Almost no internal logic
+      - Only:
+          * argument parsing
+          * logging
+          * reading from results.h5
+          * calling library functions
+          * writing results back to results.h5
+
+  (B) Library code (src/tokdesign/)
+      - All actual logic lives here
+      - Physics, geometry, optimization, I/O, visualization
+      - Reusable across scripts and stages
+
+This ensures:
+  • scripts remain readable and stable
+  • logic is testable and reusable
+  • new stages can be added without refactoring old ones
+
+
+2.2 results.h5 as the single source of truth
+
+With two exceptions:
+  • Stage 00 reads YAML config files
+  • Stage 09 writes plots to disk
+
+ALL stages:
+  • read inputs exclusively from results.h5
+  • write outputs exclusively to results.h5
+
+Benefits:
+  • full reproducibility
+  • resumable workflows
+  • no hidden state
+  • schema validation possible after each stage
+
+
+2.3 Schema-driven development
+
+The expected structure of results.h5 after each stage is defined in:
+
+  src/tokdesign/io/schema.py
+
+Each stage:
+  • declares which paths it must produce
+  • validates the file after completion
+
+This makes:
+  • missing outputs detectable immediately
+  • downstream scripts robust
+  • refactoring safer
+
+
+2.4 Configuration-driven behavior
+
+Optimization objectives, constraints, metrics, and parameter spaces are
+defined in YAML files.
+
+This allows:
+  • changing physics goals without touching code
+  • easy experimentation
+  • rapid extension
+
+The workflow code interprets configuration;
+it does not encode physics preferences directly.
+
+
+------------------------------------------------------------------
+3. REPOSITORY STRUCTURE
+------------------------------------------------------------------
+
+tokamak_design/
+│
+├─ configs/                      # user-editable configuration files
+│  ├─ equilibrium_space.yaml     # stage 01 parameter space
+│  ├─ equilibrium_optimization.yaml
+│  ├─ device_space.yaml          # stage 02 device parameter space
+│  └─ (future configs)
+│
+├─ scripts/                      # orchestrator scripts
+│  ├─ run_workflow.py
+│  ├─ 00_init_run.py
+│  ├─ 01_optimize_equilibrium.py
+│  ├─ 02_fit_device_to_equilibrium.py
+│  ├─ 03_polish_joint_optimization.py
+│  ├─ 04_analytics.py
+│  └─ 09_quicklook.py
+│
+├─ src/
+│  └─ tokdesign/
+│     ├─ io/
+│     ├─ geometry/
+│     ├─ physics/
+│     ├─ optimization/
+│     └─ viz/
+│
+├─ data/
+│  └─ runs/
+│     └─ <run_id>/
+│        ├─ results.h5
+│        ├─ run.log
+│        ├─ figures/
+│        └─ inputs/              # optional copy of YAMLs
+│
+└─ docs/
+
+
+------------------------------------------------------------------
+4. STAGE OVERVIEW
+------------------------------------------------------------------
+
+The workflow is sequential but resumable.
+
+Stages:
+  00 → initialize run and inputs
+  01 → equilibrium optimization (physics-first)
+  02 → device fitting (engineering response)
+  03 → coupled polishing optimization
+  04 → optional analytics
+  09 → visualization only
+
+
+------------------------------------------------------------------
+5. STAGE 00 — INITIALIZATION
+------------------------------------------------------------------
+
+Script:
+  scripts/00_init_run.py
+
+Purpose:
+  • Load YAML configuration files
+  • Create a unique run directory
+  • Initialize results.h5
+  • Store all inputs and metadata
+
+Key operations:
+  • Auto-discover config directory
+  • Load all *.yaml files found
+  • If required list provided:
+      - check presence
+      - error if missing
+    Otherwise:
+      - continue with warning
+  • Create data/runs/<run_id>/
+  • Write:
+      /meta/*
+      /input/<config_name>/*
+
+Optional:
+  • Copy YAML files into run_dir/inputs/
+
+Output:
+  • results.h5 initialized
+  • logging started
+  • no physics performed
+
+
+------------------------------------------------------------------
+6. STAGE 01 — EQUILIBRIUM OPTIMIZATION
+------------------------------------------------------------------
+
+Script:
+  scripts/01_optimize_equilibrium.py
+
+Concept:
+  Physics-first design.
+  Optimize a plasma equilibrium before worrying about coils.
+
+This is a PDE-constrained optimization problem.
+
+6.1 Inputs (from results.h5)
+
+  /input/equilibrium_space/
+  /input/equilibrium_optimization/
+
+6.2 Parameter space (equilibrium_space.yaml)
+
+Defines:
+  • boundary geometry (Miller parameters)
+  • profile parameters:
+      - pressure p(ψ)
+      - toroidal field function F(ψ)
+  • global constraints (e.g. total plasma current)
+  • bounds
+  • active/inactive flags
+
+Only parameters marked active participate in optimization.
+
+6.3 Physics model
+
+  • Axisymmetric Grad–Shafranov equation
+  • Fixed plasma boundary
+  • Rectangular R–Z grid
+  • Dirichlet boundary conditions
+  • Pressure and F profiles prescribed as functions of ψ
+
+6.4 Optimization structure
+
+For each candidate x:
+
+  1) Build boundary and profiles
+  2) Solve Grad–Shafranov
+  3) Extract equilibrium quantities
+  4) Perform feasibility checks
+  5) Compute tiered metrics
+  6) Evaluate constraints
+  7) Evaluate objective function
+
+Infeasible equilibria are rejected early.
+
+6.5 Metrics, constraints, objectives
+
+Defined entirely in equilibrium_optimization.yaml:
+  • tiered evaluation
+  • q-profile properties
+  • shear and s–α envelope proxies
+  • geometric constraints
+  • beta and current limits
+  • regularization terms
+
+6.6 Outputs
+
+Written to:
+  /stage01_fixed/
+
+Includes:
+  • optimization trace
+  • best equilibrium fields
+  • derived metrics
+  • constraint margins
+
+
+------------------------------------------------------------------
+7. STAGE 02 — DEVICE FITTING
+------------------------------------------------------------------
+
+Script:
+  scripts/02_fit_device_to_equilibrium.py
+
+Concept:
+  Given an optimal equilibrium,
+  find a device configuration that can reproduce it.
+
+This stage introduces engineering reality.
+
+7.1 Inputs
+
+  • Target equilibrium from /stage01_fixed/best/
+  • /input/device_space/
+
+7.2 Device space (device_space.yaml)
+
+Defines:
+  • device inventory reference
+  • PF coil definitions
+  • which parameters are active:
+      - currents
+      - positions (future)
+      - sizes (future)
+  • bounds for each parameter
+
+Currently:
+  • PF currents active
+  • geometry fixed
+
+7.3 Algorithm
+
+  1) Load baseline device
+  2) Build coil Green’s functions
+  3) Define fitting target:
+       - match ψ on LCFS
+       - possibly shape descriptors
+  4) Solve constrained least-squares problem
+  5) Recompute equilibrium with fitted coils
+
+7.4 Outputs
+
+Written to:
+  /stage02_device_fit/
+
+Includes:
+  • fitted device parameters
+  • achieved equilibrium
+  • mismatch metrics relative to target
+
+
+------------------------------------------------------------------
+8. STAGE 03 — JOINT POLISHING
+------------------------------------------------------------------
+
+Script:
+  scripts/03_polish_joint_optimization.py
+
+Concept:
+  Stage 02 will not perfectly match the target equilibrium.
+  This stage performs a final, coupled optimization.
+
+Characteristics:
+  • device parameters are optimization variables
+  • full equilibrium solve per evaluation
+  • computationally expensive
+
+This is intended as a polishing step, not a global search.
+
+Outputs:
+  • refined device
+  • refined equilibrium
+  • final optimization trace
+
+
+------------------------------------------------------------------
+9. STAGE 04 — ANALYTICS
+------------------------------------------------------------------
+
+Script:
+  scripts/04_analytics.py
+
+Purpose:
+  Optional, modular post-processing.
+
+Examples:
+  • refined equilibrium analysis
+  • stability proxies
+  • transport estimates
+  • turbulence indicators
+
+Each analysis writes into:
+  /stage04_analytics/<topic>/
+
+
+------------------------------------------------------------------
+10. STAGE 09 — QUICKLOOK
+------------------------------------------------------------------
+
+Script:
+  scripts/09_quicklook.py
+
+Rules:
+  • no physics
+  • no writing to results.h5
+  • only reads H5
+  • only writes plots
+
+Outputs:
+  • figures in run_dir/figures/
+
+
+------------------------------------------------------------------
+11. LIBRARY MODULE OVERVIEW
+------------------------------------------------------------------
+
+src/tokdesign/io/
+  • config discovery
+  • HDF5 read/write helpers
+  • schema validation
+  • logging utilities
+
+src/tokdesign/geometry/
+  • plasma boundary parameterizations
+  • coil geometry
+  • vessel geometry
+
+src/tokdesign/physics/
+  • Grad–Shafranov solver
+  • profile construction
+  • equilibrium diagnostics
+  • stability proxies
+
+src/tokdesign/optimization/
+  • control variable handling
+  • metric registry
+  • objective assembly
+  • constraint evaluation
+  • stage-specific drivers
+
+src/tokdesign/viz/
+  • equilibrium plots
+  • device plots
+  • optimization diagnostics
+
+
+------------------------------------------------------------------
+12. FUTURE DIRECTIONS
+------------------------------------------------------------------
+
+Planned extensions:
+  • more detailed physics
+  • better stability models
+  • transport and confinement modeling
+  • free-boundary equilibria
+  • non-Python kernels for heavy computation
+  • surrogate models / DNN acceleration
+  • GUI frontend
+  • extension to stellarator design
+
+The current design intentionally leaves space for these without
+requiring architectural changes.
+
+
+------------------------------------------------------------------
+END OF DOCUMENT
+------------------------------------------------------------------

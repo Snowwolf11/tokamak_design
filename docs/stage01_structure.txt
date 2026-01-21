@@ -1,0 +1,561 @@
+STAGE 01 — EQUILIBRIUM OPTIMIZATION (CODE + MATH + DATAFLOW)
+===========================================================
+
+File: 01_code.txt
+Scope: Detailed design & implementation plan for workflow Stage 01
+Goal: Explain which scripts/modules exist, how data flows through results.h5,
+      which algorithms/physics are used, how to implement them cleanly,
+      and how to keep optimization efficient.
+
+
+----------------------------------------------------------------------
+0) STAGE 01 PURPOSE (CONCEPTUAL)
+----------------------------------------------------------------------
+
+Stage 01 is “physics-first” target search:
+
+  • We optimize an axisymmetric tokamak equilibrium under fixed boundary.
+  • We do NOT care (yet) whether PF coils can realize it.
+  • We search for equilibria that satisfy stability/performance proxies and
+    shape constraints.
+  • The output is a “target equilibrium” which Stage 02 will try to realize.
+
+Mathematically, Stage 01 is a finite-dimensional PDE-constrained optimization
+problem:
+  - decision variables x: scalar knobs (shape + profiles + global params)
+  - state equation: fixed-boundary Grad–Shafranov solve
+  - feasibility gates: hard validity checks
+  - constraints: hard physics constraints
+  - objective: weighted sum of smooth penalties
+
+This is exactly the conceptual formulation in optimization.txt. :contentReference[oaicite:4]{index=4}
+
+
+----------------------------------------------------------------------
+1) WHAT “SCRIPTS” ARE PART OF STAGE 01
+----------------------------------------------------------------------
+
+Stage 01 is one orchestrator script + a handful of library modules.
+
+1.1 Orchestrator (scripts/)
+--------------------------
+
+scripts/01_optimize_equilibrium.py
+
+Responsibilities (ONLY):
+  • parse CLI args (run_dir, verbosity, optimizer settings override)
+  • open results.h5
+  • read /input/equilibrium_space and /input/equilibrium_optimization
+  • build a stage-01 “problem object” via tokdesign.optimization.stage01_fixed
+  • run the optimizer
+  • write outputs to /stage01_fixed/...
+  • call schema validation for stage 01 (optional but recommended)
+
+Non-responsibilities:
+  • no physics math inside the script
+  • no metric definitions inside the script
+  • no “special case” hacks; those live in library code
+
+
+1.2 Library modules (src/tokdesign/)
+------------------------------------
+
+Recommended module split (Stage 01 relevant subset):
+
+src/tokdesign/io/
+  - h5.py:
+      * read_config_group(h5, "/input/equilibrium_space")
+      * write_stage01_outputs(...)
+      * write_trace_incremental(...) (optional)
+      * snapshot_history(paths) (optional)
+  - schema.py:
+      * validate_stage("01", h5)
+  - logging_utils.py:
+      * stage banners + consistent formatting
+
+src/tokdesign/geometry/
+  - boundary.py:
+      * miller_boundary(params, n_points) -> (R(θ), Z(θ), polygon)
+      * geometry_validity_checks(polygon) -> flags
+
+src/tokdesign/physics/gs/
+  - grid.py:
+      * build_grid(Rmin,Rmax,Zmin,Zmax,NR,NZ)
+      * domain_mask_from_lcfs(polygon)
+  - sources.py:
+      * build_profiles(x): p(ψ̄), F(ψ̄), derivatives dp/dψ, d(F^2)/dψ
+      * normalize/enforce total current I_t closure
+  - solver_fixed.py:
+      * solve_fixed_boundary(boundary_polygon, profiles, I_t, grid, settings)
+        -> psi(R,Z), convergence info
+  - lcfs.py:
+      * find_axis(psi)
+      * extract_lcfs_contour(psi, psi_lcfs)
+      * compute_flux_surfaces(psi) utilities
+
+src/tokdesign/physics/
+  - equilibrium.py:
+      * compute derived equilibrium quantities:
+          q(ρ), shear s(ρ), alpha(ρ) proxy, beta_N, li, Shafranov shift, etc.
+      * radial coordinate definition ρ = sqrt(ψ̄) (as in config) :contentReference[oaicite:5]{index=5}
+
+src/tokdesign/optimization/
+  - controls.py:
+      * parse equilibrium_space.yaml into:
+          bounds, active flags, vector <-> dict mapping
+      * x_to_params(x) / params_to_x(dict)
+  - metrics/registry.py:
+      * metric dependency DAG
+      * tiering (tier0/tier1/tier2)
+      * caching hooks (per-eval)
+  - metrics/compute.py:
+      * implement metric functions referenced in YAML/objectives
+  - constraints.py:
+      * g_i(x) construction and evaluation (hard constraints)
+  - penalties.py:
+      * hinge / target / band primitives (smooth penalties) :contentReference[oaicite:6]{index=6}
+  - objectives.py:
+      * objective assembly from config blocks
+      * objective breakdown per block/term
+  - stage01_fixed.py:
+      * the “evaluation function”:
+          eval(x) -> {feasible, metrics, constraints, objective, breakdown}
+      * wraps the physics solve + metric computation + objective/constraints
+
+
+----------------------------------------------------------------------
+2) DATAFLOW (RESULTS.H5 CONTRACT)
+----------------------------------------------------------------------
+
+2.1 Inputs Stage 01 reads
+-------------------------
+
+Stage 01 reads ONLY from results.h5:
+
+  /input/equilibrium_space/...
+  /input/equilibrium_optimization/...
+
+equilibrium_space describes:
+  • boundary model = Miller
+  • which parameters are active, with bounds
+  • profile param choices (power-law pressure, linear F) :contentReference[oaicite:7]{index=7}
+
+equilibrium_optimization describes:
+  • feasibility gates / tiering
+  • metric definitions and dependencies
+  • objective blocks/weights
+  • hard constraint list (limits for q0, q95, κ, δ, beta_N, etc.) :contentReference[oaicite:8]{index=8}
+
+2.2 Outputs Stage 01 writes
+---------------------------
+
+Write under a single namespace:
+
+  /stage01_fixed/
+
+Recommended structure:
+
+  /stage01_fixed/meta/
+      timestamp, git hash, solver settings, optimizer settings, walltime
+
+  /stage01_fixed/trace/
+      x[k], f[k], feasible[k], constraint_margins[k], key metrics[k]
+      (store either all evals or only accepted steps; both are fine)
+
+  /stage01_fixed/best/
+      /controls/    best x + mapped parameters
+      /equilibrium/ psi, axis, lcfs, profiles, grid metadata
+      /metrics/     full metric table (q-profile arrays, shear arrays, scalars)
+      /objective/   objective breakdown + totals
+      /constraints/ final margins
+
+The “best” equilibrium is what Stage 02 consumes as the target.
+
+
+----------------------------------------------------------------------
+3) STAGE 01 MATH & PHYSICS (WHAT IS SOLVED)
+----------------------------------------------------------------------
+
+3.1 Decision variables x (controls)
+-----------------------------------
+
+x ∈ R^n is a vector of scalar knobs, e.g.:
+
+  Boundary (Miller):
+    R0, a, κ, δ, Z0 (and later: X-point parameters)
+
+  Global:
+    I_t, B0, R_ref (or equivalent F0 linkage)
+
+  Profiles:
+    p0, α_p (pressure power-law)
+    α_F (linear F model)
+
+All of these are explicitly described in optimization.txt. :contentReference[oaicite:9]{index=9}
+They are also represented in equilibrium_space.yaml with active flags & bounds. :contentReference[oaicite:10]{index=10}
+
+3.2 State equation: fixed-boundary Grad–Shafranov
+-------------------------------------------------
+
+Given x:
+  • define LCFS boundary ∂Ω(x) via Miller model
+  • solve GS inside Ω(x):
+
+  Δ*ψ = −μ0 R^2 dp/dψ − (1/2) d(F^2)/dψ     in Ω(x)
+  ψ = ψ_lcfs                               on ∂Ω(x)
+
+with a closure / enforcement condition:
+
+  ∫_Ω jφ(ψ;x) dA = I_t(x)
+
+This removes normalization degeneracy and pins the solution scale. :contentReference[oaicite:11]{index=11}
+
+Notes for code:
+  • grid is a rectangular (R,Z) mesh
+  • Ω(x) is enforced by a “mask” (inside LCFS polygon)
+  • boundary is Dirichlet on the LCFS and (if needed) on outer domain boundary
+  • discretization: sparse finite differences + linear/nonlinear iterations
+    (use your existing solver approach, but Stage 01 wraps it cleanly)
+
+3.3 Derived quantities (diagnostics)
+------------------------------------
+
+From ψ(R,Z) you derive:
+  • normalized flux ψ̄ (0 at axis, 1 at LCFS)
+  • flux surfaces
+  • q-profile q(ρ) (ρ = sqrt(ψ̄) per config) :contentReference[oaicite:12]{index=12}
+  • shear s(ρ) = (ρ/q) dq/dρ :contentReference[oaicite:13]{index=13}
+  • α(ρ) proxy (pressure-gradient-driven) :contentReference[oaicite:14]{index=14}
+  • beta, beta_p, beta_N, li, stored energy W, volume V, etc. :contentReference[oaicite:15]{index=15}
+
+This matches the metric catalogue guidance. :contentReference[oaicite:16]{index=16}
+
+
+----------------------------------------------------------------------
+4) FEASIBILITY GATES (TIER 0) — HARD REJECTION
+----------------------------------------------------------------------
+
+Before computing expensive metrics, Stage 01 must decide if the candidate is
+even valid.
+
+Feasibility predicate C(x) (boolean):
+  • GS converged
+  • LCFS exists and is closed
+  • magnetic axis exists inside LCFS
+  • LCFS inside computational domain
+  • geometry validity: no self-intersection, sane minor radius, etc.
+  • profile validity: finite, no NaNs, pressure non-negative, dp/dψ finite
+
+These are explicitly enumerated in optimization.txt and in the metric catalogue
+as Tier-0 solver/feasibility metrics. :contentReference[oaicite:17]{index=17} :contentReference[oaicite:18]{index=18}
+
+Implementation rule:
+  If C(x) fails:
+    - do NOT compute tiers 1/2
+    - return f(x)=+∞ (or very large), feasible=False
+    - store reason code in trace for debugging
+
+
+----------------------------------------------------------------------
+5) CONSTRAINTS g_i(x) ≤ 0 (HARD PHYSICS LIMITS)
+----------------------------------------------------------------------
+
+Constraints are separate from the objective. They represent “must satisfy”.
+
+Typical ones (from the conceptual doc):
+  • q0 >= q0_min
+  • q95 >= q95_min
+  • κ <= κ_max
+  • δ <= δ_max
+  • β_N <= β_N_max
+  • optional shear/ballooning envelope constraints
+
+See Section 4 of optimization.txt for canonical forms. :contentReference[oaicite:19]{index=19}
+
+Implementation approach:
+  - Represent each constraint as:
+      value(x) and margin(x) = limit - value (or value - limit)
+      standardized sign so that margin >= 0 means satisfied
+  - Store margins as:
+      /stage01_fixed/trace/constraint_margins[k, i]
+  - Optimizer interface:
+      * either handle as explicit constraints (if optimizer supports)
+      * or handle via an “infeasible penalty wrapper”:
+          if any margin < 0: return big penalty and mark infeasible
+
+
+----------------------------------------------------------------------
+6) OBJECTIVE FUNCTION f(x) — WHAT DOES THE OPTIMIZER MINIMIZE?
+----------------------------------------------------------------------
+
+The recommended Stage 01 objective is a weighted sum of smooth penalty terms:
+
+  f(x) =
+    w_perf  * J_perf(x)
+  + w_q     * J_q(x)
+  + w_shear * J_s(x)
+  + w_alpha * J_alpha(x)
+  + w_prof  * J_profiles(x)
+  + w_shape * J_shape(x)
+  + w_vert  * J_vertical(x)
+  + w_reg   * J_regularization(x)
+
+This is exactly the conceptual formulation. :contentReference[oaicite:20]{index=20}
+
+6.1 Penalty primitives (reusable helpers)
+-----------------------------------------
+
+Define small, composable penalty functions:
+
+Lower hinge (soft floor):
+  H_-(y; y_min, s) = max(0, (y_min - y)/s)^2
+
+Upper hinge (soft cap):
+  H_+(y; y_max, s) = max(0, (y - y_max)/s)^2
+
+Target penalty:
+  T(y; y*, s) = ((y - y*)/s)^2
+
+Band penalty:
+  B(y; a, b, s) = H_-(y; a, s) + H_+(y; b, s)
+
+All are dimensionless via scaling s.
+
+These definitions are in optimization.txt and should live in
+tokdesign/optimization/penalties.py. :contentReference[oaicite:21]{index=21}
+
+6.2 Typical blocks (examples)
+-----------------------------
+
+Performance block J_perf:
+  • encourage desired β_N
+  • optionally stored energy W, total β sanity bands
+
+q-profile block J_q:
+  • comfort band for q0 (soft)
+  • penalty for low-q volume fraction
+  • penalty for rational proximity
+  • smoothness penalty ∫(d²q/dρ²)² dρ
+
+Shear block J_s:
+  • edge shear floor (soft)
+  • negative shear extent penalty
+  • shear spike cap
+  • smoothness penalty
+
+Ballooning/s–α proxy block J_alpha:
+  • edge α cap
+  • envelope violation integral: ∫ max(0, α - α_crit(s))² dρ
+  • minimum margin preference
+
+Profiles block:
+  • pressure peaking, edge gradient
+  • current peaking, internal inductance li, current centroid shift
+
+Shape block:
+  • target κ, target δ, Shafranov shift cap, curvature caps
+
+Vertical proxy:
+  • empirical κ·li penalties (cheap proxy)
+
+Regularization:
+  • distance-to-bounds penalty on controls
+  • (optional) smoothing penalties
+
+These blocks correspond to the metric catalogue categories and the full
+objective breakdown in the conceptual doc. :contentReference[oaicite:22]{index=22} :contentReference[oaicite:23]{index=23}
+
+6.3 Objective breakdown for debugging
+-------------------------------------
+
+Always return:
+  • total f
+  • f_block breakdown
+  • term-level breakdown (optional)
+
+This is essential when tuning weights or diagnosing convergence.
+
+
+----------------------------------------------------------------------
+7) TIERED METRIC EVALUATION (EFFICIENCY STRATEGY #1)
+----------------------------------------------------------------------
+
+The optimization config should define metric tiers:
+  - Tier 0: feasibility + basic scalars
+  - Tier 1: q-profile and basic derived arrays
+  - Tier 2: heavier integrals/envelope metrics, etc.
+
+This concept is emphasized in both the YAML design and the metric catalogue. :contentReference[oaicite:24]{index=24} :contentReference[oaicite:25]{index=25}
+
+Implementation:
+  • Create a “metric registry” with dependencies:
+      metric_name -> function + required inputs (psi, q-profile, dp/dρ, etc.)
+  • When objective asks for a term, request its metric from the registry.
+  • Registry computes missing dependencies in correct order and caches results.
+  • This avoids computing expensive metrics unless needed.
+
+Result:
+  - infeasible candidates exit early
+  - expensive metrics computed only for viable equilibria
+  - repeated usage across objective/constraints costs almost nothing
+
+
+----------------------------------------------------------------------
+8) OPTIMIZATION LOOP — HOW TO KEEP IT FAST
+----------------------------------------------------------------------
+
+Stage 01 cost is dominated by “GS solve + derived profile calculations”.
+Efficiency comes from:
+
+8.1 Early rejection
+-------------------
+Do feasibility gates immediately after solve.
+If any fail: stop evaluation.
+
+8.2 Cached reuse within evaluation
+----------------------------------
+Within one x-evaluation:
+  - compute psi once
+  - compute ψ̄ once
+  - compute q(ρ) once
+  - reuse for shear, alpha, constraints, objective terms
+
+8.3 Warm starts (solver efficiency)
+-----------------------------------
+If optimizer steps are small, use previous ψ as initial guess for GS solve.
+
+Implementation idea:
+  evaluation object holds last_psi and supplies it as initial state.
+This can cut iterations drastically.
+
+8.4 Adaptive fidelity (optional)
+--------------------------------
+Use a coarse grid early, refine later:
+  - start with NR,NZ small for exploration
+  - once near-feasible, switch to higher resolution for final polishing
+
+This is optional but a strong speed lever.
+
+8.5 Numerical smoothing & stable derivatives
+--------------------------------------------
+q and derivatives can be noisy.
+Use Savitzky–Golay or similar smoothing for dq/dρ and d²q/dρ² as recommended
+in your optimization config design. :contentReference[oaicite:26]{index=26}
+
+8.6 Optimizer choice (practical guidance)
+-----------------------------------------
+Stage 01 is “black-box with expensive evaluations”.
+Typical robust choices:
+  - derivative-free: CMA-ES, Nelder–Mead, Powell (good for robustness)
+  - gradient-based if you later add sensitivities/adjoints
+
+Current v0 approach: treat as black-box with caching and warm starts.
+
+
+----------------------------------------------------------------------
+9) PUTTING IT INTO CODE — RECOMMENDED “EVALUATE(x)” INTERFACE
+----------------------------------------------------------------------
+
+The heart of Stage 01 should be a single function:
+
+  evaluate(x) -> EvalResult
+
+Where EvalResult includes:
+  - feasible: bool
+  - reason: str or enum (if infeasible)
+  - objective: float
+  - constraints: dict[str, margin]
+  - metrics: dict[str, scalar/array]
+  - breakdown: dict[str, float] (objective blocks)
+
+Pseudo-structure:
+
+  def evaluate(x):
+      params = controls.x_to_params(x)
+
+      # geometry
+      lcfs = boundary.miller_boundary(params.boundary)
+      if not geometry_valid(lcfs): return infeasible
+
+      # GS solve
+      profiles = sources.build_profiles(params.profiles, params.globals)
+      psi, info = solver_fixed.solve_fixed_boundary(lcfs, profiles, params.I_t, grid, init_guess=last_psi)
+
+      if not info.converged: return infeasible
+
+      # axis/lcfs checks
+      axis = lcfs_tools.find_axis(psi)
+      if axis missing: return infeasible
+
+      # derived
+      eq = equilibrium.compute_all(psi, lcfs, profiles, radial_coord="rho=sqrt(psibar)")
+
+      # constraints
+      margins = constraints.evaluate(eq, params)
+      if any(m < 0): return infeasible_or_penalized
+
+      # objective
+      obj, breakdown = objective.evaluate(eq, params)
+
+      return EvalResult(feasible=True, objective=obj, constraints=margins, metrics=selected, breakdown=breakdown)
+
+The orchestrator then passes evaluate(x) to the optimizer.
+
+
+----------------------------------------------------------------------
+10) WHAT STAGE 01 PRODUCES FOR STAGE 02
+----------------------------------------------------------------------
+
+Stage 01 best output must be sufficient to define a target for device fitting:
+
+Minimum needed:
+  • LCFS boundary (R(θ), Z(θ)) or equivalent representation
+  • axis location
+  • psi field on grid (or at least psi on LCFS and inside region)
+  • profiles (p(ψ̄), F(ψ̄))
+  • global scalars (I_t, B0, R0, a, κ, δ)
+  • derived target metrics (q-profile targets if Stage 02 uses them)
+
+Write these under /stage01_fixed/best/...
+
+
+----------------------------------------------------------------------
+11) METRIC AND OBJECTIVE CATALOGUE (REFERENCE)
+----------------------------------------------------------------------
+
+The Stage 01 optimization should draw from a consistent catalogue of metrics,
+including:
+
+  Tier-0: solver & feasibility checks
+  Global: V, W, β, β_N, li, aspect ratio
+  q-profile: q0, q95, q_min, monotonicity, low-q fraction, rational proximity
+  shear: s(ρ) and summary stats
+  pressure/current: peaking, gradients, centroid shift
+  ballooning/s–α proxies: α(ρ), envelope margins
+  shape: κ, δ, Shafranov shift
+  vertical proxies: κ–li combined penalty
+  regularization: bounds distance, smoothness
+
+This catalogue is described in stability_metrics.txt. :contentReference[oaicite:27]{index=27}
+
+
+----------------------------------------------------------------------
+12) FINAL STAGE 01 PROBLEM STATEMENT (ONE BOX)
+----------------------------------------------------------------------
+
+Minimize:
+  f(x)  (weighted sum of smooth penalties)
+
+Subject to:
+  C(x) = true  (feasibility gates)
+  g_i(x) ≤ 0   (hard constraints)
+
+Where:
+  C(x) depends on solving a fixed-boundary GS equilibrium and validating it.
+
+This is the exact formulation in optimization.txt. :contentReference[oaicite:28]{index=28}
+
+
+----------------------------------------------------------------------
+END OF DOCUMENT
+----------------------------------------------------------------------

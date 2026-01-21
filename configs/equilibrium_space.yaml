@@ -1,0 +1,131 @@
+# ============================================================
+# equilibrium_space.yaml  (v0.1 FINAL)
+# ============================================================
+
+meta:
+  schema_version: "0.1"
+  name: "equilibrium_space_v0"
+  description: >
+    Stage-1 (target) equilibrium design space. Optimized in the physics-target
+    search. Stage 00 snapshots this YAML verbatim into results.h5 under:
+      /input/equilibrium_space/...
+
+conventions:
+  psi_lcfs: 1.0            # flux value on LCFS (normalization convention; not "enforcement")
+  psi_axis: "auto"         # let solver find magnetic axis and psi_axis
+
+models:
+  boundary:
+    type: "miller"         # LCFS parameterization (no X-point in v0)
+    n_points: 360          # boundary polygon resolution
+    allow_Z0_shift: true   # allow vertical shift parameter (if active)
+
+  profiles:
+    pressure:
+      model: "power"       # p = p0*(1-psi_bar)^alpha_p
+      psi_bar: "normalized"
+    toroidal_field_function:
+      model: "linear"      # F = F0*(1 - alpha_F*psi_bar)
+      psi_bar: "normalized"
+
+  enforcement:
+    mode: "I_t"            # enforce toroidal plasma current per GS solve (Ip in literature)
+
+linkages:
+  derive_F0_from_B0:
+    enabled: true          # if true: F0 is derived, not optimized directly
+    expression: "F0 = B0 * R0_B0_ref"
+    applies_to: "profiles.toroidal_field_function.F0"
+
+variables:
+
+  toroidal_field:
+    B0:                    # toroidal field at reference radius
+      units: "T"
+      bounds: [1.5, 6.0]
+      init: 4.97
+      scale: 3.0
+      active: true
+
+    R0_B0_ref:             # reference radius for Bphi ~ B0*Rref/R
+      units: "m"
+      bounds: [1.2, 2.2]
+      init: 2.2
+      scale: 1.65
+      active: true
+
+  plasma_boundary:
+    R0:                    # major radius of plasma center
+      units: "m"
+      bounds: [1.3, 2.2]
+      init: 2.012
+      scale: 1.65
+      active: true
+
+    a:                     # minor radius (horizontal)
+      units: "m"
+      bounds: [0.25, 0.75]
+      init: 0.5186
+      scale: 0.50
+      active: true
+
+    kappa:                 # elongation
+      units: "-"
+      bounds: [1.1, 2.9]
+      init: 1.543
+      scale: 1.7
+      active: true
+
+    delta:                 # triangularity
+      units: "-"
+      bounds: [0.0, 0.75]
+      init: 0.2112
+      scale: 0.35
+      active: true
+
+    Z0:                    # vertical shift of LCFS center
+      units: "m"
+      bounds: [-0.25, 0.25]
+      init: 0.0
+      scale: 0.05
+      active: false
+
+  enforcement:
+    I_t:                   # total toroidal plasma current (Ip in common notation)
+      units: "A"
+      bounds: [2.0e6, 20.0e6]
+      init: 2.0e6
+      scale: 1.0e7
+      active: true
+
+  profiles:
+
+    pressure:
+      p0:                  # pressure scale (peak-ish)
+        units: "Pa"
+        bounds: [1.0e4, 8.0e5]
+        init: 1.0e4
+        scale: 1.0e5
+        active: true
+
+      alpha_p:             # pressure peaking exponent
+        units: "-"
+        bounds: [0.3, 6.0]
+        init: 3.474
+        scale: 1.5
+        active: true
+
+    toroidal_field_function:
+      F0:                  # RBphi scale (derived if linkages enabled)
+        units: "T*m"
+        bounds: [2.0, 12.0]
+        init: 4.125
+        scale: 4.0
+        active: false      # derived by default (B0 * R0_B0_ref)
+
+      alpha_F:             # slope of F(psi_bar)
+        units: "-"
+        bounds: [0.0, 0.35]
+        init: 0.03808
+        scale: 0.05
+        active: true

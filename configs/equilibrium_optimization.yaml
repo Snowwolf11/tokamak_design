@@ -1,0 +1,818 @@
+# ============================================================
+# stage1_optimization.yaml
+# ============================================================
+# Stage-1 equilibrium target optimization (physics-only)
+# - Controls x come from equilibrium_space.yaml (scalars only)
+# - State is fixed-boundary GS solution ψ(x) with enforcement (I_t)
+# - Engineering / PF reality checks are NOT included here (by design)
+# ============================================================
+
+meta:
+  schema_version: "0.1"
+  name: "stage1_optimization_v0"
+  description: >
+    Stage-1 PDE-constrained optimization for fixed-boundary GS equilibrium targets.
+    Encodes feasibility gates, metric definitions, constraints g_i(x) <= 0, and
+    objective f(x) = sum_k w_k * term_k. All items have enable flags.
+
+stage:
+  id: "01"
+  mode: "fixed_boundary"          # Stage-1 only
+  state_equation: "grad_shafranov"
+
+evaluation:
+  fail_policy:
+    infeasible_returns: "huge_penalty"  # reject | huge_penalty
+    huge_penalty_value: 1.0e9
+  caching:
+    enable: true                  # cache metrics per candidate x
+  metric_tiers:
+    # optional convenience: compute tier by tier and early-abort if constraints violated
+    enable: true
+    order: ["tier0", "tier1", "tier2"]
+
+# ------------------------------------------------------------
+# Feasibility gates C(x) (Tier-0 hard validity checks)
+# ------------------------------------------------------------
+feasibility_gates:
+  enabled: true
+  gates:
+    - name: "gs_converged"
+      enabled: true
+      type: "flag"                # a boolean from solver
+      source: "gs.converged"
+      required: true
+
+    - name: "lcfs_exists"
+      enabled: true
+      type: "flag"
+      source: "equilibrium.lcfs.exists"
+      required: true
+
+    - name: "axis_exists"
+      enabled: true
+      type: "flag"
+      source: "equilibrium.axis.exists"
+      required: true
+
+    - name: "lcfs_inside_domain"
+      enabled: true
+      type: "flag"
+      source: "equilibrium.lcfs.inside_domain"
+      required: true
+
+    - name: "geometry_valid"
+      enabled: true
+      type: "flag"
+      source: "equilibrium.geometry.valid"
+      required: true
+
+    - name: "profiles_valid"
+      enabled: true
+      type: "flag"
+      source: "equilibrium.profiles.valid"
+      required: true
+
+# ------------------------------------------------------------
+# Common definitions used by curve-based metrics
+# ------------------------------------------------------------
+radial_coordinate:
+  name: "rho"
+  definition: "sqrt(psi_bar)"     # rho := sqrt(psi_normalized)
+  psi_bar:
+    axis: 0.0
+    lcfs: 1.0
+
+bands:
+  core: { rho_min: 0.10, rho_max: 0.30 }
+  mid:  { rho_min: 0.40, rho_max: 0.70 }
+  edge: { rho_min: 0.80, rho_max: 0.95 }
+
+derivatives:
+  method: "savgol"                # savgol | spline | finite_difference
+  params:
+    window: 11
+    polyorder: 3
+
+aggregations:
+  # Use robust aggregations to avoid noise spikes
+  edge_max_percentile: 95
+  use_percentile_for_max: true
+
+# ------------------------------------------------------------
+# Penalty primitives (dimensionless)
+# ------------------------------------------------------------
+penalties:
+  hinge_lower:
+    type: "H_minus"               # max(0, (min - y)/scale)^2
+  hinge_upper:
+    type: "H_plus"                # max(0, (y - max)/scale)^2
+  target:
+    type: "T"                     # ((y - target)/scale)^2
+  band:
+    type: "B"                     # hinge_lower + hinge_upper
+
+# ------------------------------------------------------------
+# Metric registry (what can be computed)
+# - enabled: false prevents compute even if referenced
+# - tier: for tiered evaluation
+# - compute: implementation switch in code
+# ------------------------------------------------------------
+metrics:
+
+  # ---------------- Tier 0 / feasibility already handled by gates ----------------
+
+  # ---------------- Tier 1: core scalars & basic curves ----------------
+  I_t:
+    enabled: true
+    tier: "tier1"
+    compute: "from_controls"
+    params: { path: "enforcement.I_t" }   # control variable
+
+  B0:
+    enabled: true
+    tier: "tier1"
+    compute: "from_controls"
+    params: { path: "toroidal_field.B0" } # control variable
+
+  aspect_ratio:
+    enabled: true
+    tier: "tier1"
+    compute: "R0_over_a"
+    params:
+      R0_path: "plasma_boundary.R0"
+      a_path:  "plasma_boundary.a"
+
+  volume:
+    enabled: true
+    tier: "tier1"
+    compute: "plasma_volume"
+
+  poloidal_flux:
+    enabled: true
+    tier: "tier1"
+    compute: "poloidal_flux_total"
+
+  stored_energy:
+    enabled: true
+    tier: "tier1"
+    compute: "stored_energy"
+
+  beta:
+    enabled: true
+    tier: "tier1"
+    compute: "beta_total"
+    params:
+      B_ref: "B0"                  # uses B0 metric
+
+  beta_p:
+    enabled: true
+    tier: "tier1"
+    compute: "beta_poloidal"
+
+  beta_N:
+    enabled: true
+    tier: "tier1"
+    compute: "beta_normalized"
+    params:
+      a_path: "plasma_boundary.a"
+      B_ref: "B0"
+      I_ref: "I_t"
+
+  li:
+    enabled: true
+    tier: "tier1"
+    compute: "internal_inductance"
+
+  shafranov_shift:
+    enabled: true
+    tier: "tier1"
+    compute: "shafranov_shift"
+
+  kappa:
+    enabled: true
+    tier: "tier1"
+    compute: "from_controls"
+    params: { path: "plasma_boundary.kappa" }
+
+  delta:
+    enabled: true
+    tier: "tier1"
+    compute: "from_controls"
+    params: { path: "plasma_boundary.delta" }
+
+  q_profile:
+    enabled: true
+    tier: "tier1"
+    compute: "q_profile"
+    params:
+      n_points: 201
+      coordinate: "rho"
+
+  q0:
+    enabled: true
+    tier: "tier1"
+    compute: "q_at_rho"
+    depends_on: ["q_profile"]
+    params: { rho: 0.0 }
+
+  q95:
+    enabled: true
+    tier: "tier1"
+    compute: "q_at_psi"
+    depends_on: ["q_profile"]
+    params: { psi_bar: 0.95 }
+
+  q_min:
+    enabled: true
+    tier: "tier1"
+    compute: "q_min"
+    depends_on: ["q_profile"]
+
+  rho_qmin:
+    enabled: true
+    tier: "tier1"
+    compute: "rho_at_q_min"
+    depends_on: ["q_profile"]
+
+  q_monotonicity_violation:
+    enabled: true
+    tier: "tier1"
+    compute: "integral_negative_derivative"
+    depends_on: ["q_profile"]
+    params:
+      derivative_of: "q"
+      coordinate: "rho"
+      # integral of max(0, -dq/drho)
+      band: { rho_min: 0.0, rho_max: 1.0 }
+
+  low_q_volume_fraction:
+    enabled: true
+    tier: "tier1"
+    compute: "volume_fraction_q_below"
+    depends_on: ["q_profile"]
+    params:
+      q_threshold: 2.0
+
+  q_rational_proximity:
+    enabled: true
+    tier: "tier1"
+    compute: "rational_surface_proximity"
+    depends_on: ["q_profile"]
+    params:
+      rationals: [2.0, 1.5, 1.3333333333]   # 2, 3/2, 4/3
+      band: "edge"                           # focus near edge by default
+
+  q_smoothness:
+    enabled: true
+    tier: "tier1"
+    compute: "integral_second_derivative_squared"
+    depends_on: ["q_profile"]
+    params:
+      quantity: "q"
+      coordinate: "rho"
+      band: { rho_min: 0.0, rho_max: 1.0 }
+
+  # ---------------- Tier 2: shear, alpha, profile gradients ----------------
+  shear_profile:
+    enabled: true
+    tier: "tier2"
+    compute: "magnetic_shear"
+    depends_on: ["q_profile"]
+    params:
+      definition: "rho_over_q_dqdrho"
+      derivative: { use: "derivatives" }
+
+  s_min:
+    enabled: true
+    tier: "tier2"
+    compute: "min"
+    depends_on: ["shear_profile"]
+
+  s_max:
+    enabled: true
+    tier: "tier2"
+    compute: "max"
+    depends_on: ["shear_profile"]
+    params:
+      robust_max: { percentile: 99 }        # avoid spikes
+
+  s_edge_mean:
+    enabled: true
+    tier: "tier2"
+    compute: "mean_in_band"
+    depends_on: ["shear_profile"]
+    params: { band: "edge" }
+
+  s_edge_min:
+    enabled: true
+    tier: "tier2"
+    compute: "min_in_band"
+    depends_on: ["shear_profile"]
+    params: { band: "edge" }
+
+  negative_shear_extent:
+    enabled: true
+    tier: "tier2"
+    compute: "integral_negative_part"
+    depends_on: ["shear_profile"]
+    params:
+      band: { rho_min: 0.0, rho_max: 1.0 }
+
+  shear_smoothness:
+    enabled: true
+    tier: "tier2"
+    compute: "integral_second_derivative_squared"
+    depends_on: ["shear_profile"]
+    params:
+      quantity: "s"
+      coordinate: "rho"
+      band: { rho_min: 0.0, rho_max: 1.0 }
+
+  p0:
+    enabled: true
+    tier: "tier1"
+    compute: "from_controls"
+    params: { path: "profiles.pressure.p0" }
+
+  p_peak:
+    enabled: true
+    tier: "tier2"
+    compute: "pressure_on_axis"
+
+  p_avg:
+    enabled: true
+    tier: "tier2"
+    compute: "pressure_volume_average"
+
+  p_peaking_factor:
+    enabled: true
+    tier: "tier2"
+    compute: "ratio"
+    depends_on: ["p_peak", "p_avg"]
+
+  dpdrho_max:
+    enabled: true
+    tier: "tier2"
+    compute: "max_abs_pressure_gradient"
+    params:
+      coordinate: "rho"
+      robust_max: { percentile: 95 }
+
+  edge_pressure_gradient_integral:
+    enabled: true
+    tier: "tier2"
+    compute: "integral_abs_pressure_gradient"
+    params:
+      coordinate: "rho"
+      band: "edge"
+
+  j_peak:
+    enabled: true
+    tier: "tier2"
+    compute: "current_density_on_axis"
+
+  j_avg:
+    enabled: true
+    tier: "tier2"
+    compute: "current_density_area_average"
+
+  j_peaking_factor:
+    enabled: true
+    tier: "tier2"
+    compute: "ratio"
+    depends_on: ["j_peak", "j_avg"]
+
+  current_centroid_shift:
+    enabled: true
+    tier: "tier2"
+    compute: "current_centroid_shift"
+
+  alpha_profile:
+    enabled: true
+    tier: "tier2"
+    compute: "ballooning_alpha_proxy"
+    depends_on: ["q_profile"]
+    params:
+      coordinate: "rho"
+      B_ref: "B0"
+      R_ref: "plasma_boundary.R0"
+
+  alpha_edge_mean:
+    enabled: true
+    tier: "tier2"
+    compute: "mean_in_band"
+    depends_on: ["alpha_profile"]
+    params: { band: "edge" }
+
+  alpha_edge_p95:
+    enabled: true
+    tier: "tier2"
+    compute: "percentile_in_band"
+    depends_on: ["alpha_profile"]
+    params: { band: "edge", percentile: 95 }
+
+  alpha_edge_integral:
+    enabled: true
+    tier: "tier2"
+    compute: "integral_in_band"
+    depends_on: ["alpha_profile"]
+    params: { band: "edge" }
+
+  s_alpha_envelope_margin_min:
+    enabled: true
+    tier: "tier2"
+    compute: "s_alpha_margin_min"
+    depends_on: ["shear_profile", "alpha_profile"]
+    params:
+      band: "edge"
+      envelope:
+        type: "piecewise_linear"
+        # Placeholder envelope; replace with something better later.
+        # alpha_crit(s) defined by points (s, alpha_crit).
+        points:
+          - [0.0, 0.4]
+          - [0.5, 0.8]
+          - [1.0, 1.2]
+          - [2.0, 1.6]
+
+  s_alpha_envelope_negative_margin_integral:
+    enabled: true
+    tier: "tier2"
+    compute: "s_alpha_negative_margin_integral"
+    depends_on: ["shear_profile", "alpha_profile"]
+    params:
+      band: "edge"
+      envelope_ref: "s_alpha_envelope_margin_min.envelope"
+      margin_scale: 0.2
+
+  kappa_li_proxy:
+    enabled: true
+    tier: "tier2"
+    compute: "product"
+    depends_on: ["kappa", "li"]
+
+# ------------------------------------------------------------
+# Constraints g_i(x) <= 0  (physics-only)
+# ------------------------------------------------------------
+constraints:
+  enabled: true
+  policy:
+    on_violation: "penalty"          # reject | penalty
+  list:
+
+    - name: "q0_min"                # g_q0 = q0_min - q0 <= 0
+      enabled: true
+      metric: "q0"
+      op: ">="
+      value: 0.2
+
+    - name: "q95_min"               # g_q95 = q95_min - q95 <= 0
+      enabled: true
+      metric: "q95"
+      op: ">="
+      value: 2.0
+
+    - name: "kappa_max"
+      enabled: true
+      metric: "kappa"
+      op: "<="
+      value: 2.10
+
+    - name: "delta_max"
+      enabled: true
+      metric: "delta"
+      op: "<="
+      value: 0.60
+
+    - name: "betaN_max"
+      enabled: true
+      metric: "beta_N"
+      op: "<="
+      value: 3.00
+
+    - name: "beta_p_max"
+      enabled: false                 # optional
+      metric: "beta_p"
+      op: "<="
+      value: 1.50
+
+    - name: "q_monotonicity"
+      enabled: false                 # optional hard constraint; usually soft first
+      metric: "q_monotonicity_violation"
+      op: "<="
+      value: 1.0e-3                  # small allowed integral
+
+    - name: "edge_shear_min"
+      enabled: false                 # optional hard constraint
+      metric: "s_edge_min"
+      op: ">="
+      value: 0.20
+
+    - name: "s_alpha_margin_min"
+      enabled: false                 # optional hard constraint; depends on envelope quality
+      metric: "s_alpha_envelope_margin_min"
+      op: ">="
+      value: 0.00
+
+# ------------------------------------------------------------
+# Objective f(x): weighted sum of blocks and terms
+# f(x) = sum_blocks w_block * J_block
+# J_block = sum_terms w_term * penalty(metric)
+# ------------------------------------------------------------
+objective:
+  enabled: true
+  combine: "weighted_sum"
+
+  blocks:
+
+    # ---------------- Performance ----------------
+    - name: "performance"
+      enabled: true
+      weight: 1.0
+      terms:
+
+        - name: "betaN_target"
+          enabled: true
+          metric: "beta_N"
+          penalty:
+            kind: "target"
+            target: 2.2
+            scale: 0.5
+          weight: 1.0
+
+        - name: "stored_energy_target_log"
+          enabled: false             # optional; depends on how meaningful W is in your model
+          metric: "stored_energy"
+          transform: { kind: "log" }
+          penalty:
+            kind: "target"
+            target: 0.0              # set later (log W reference)
+            scale: 1.0
+          weight: 0.2
+
+        - name: "beta_band"
+          enabled: false             # optional sanity in objective (caps already exist)
+          metric: "beta"
+          penalty:
+            kind: "band"
+            min: 0.01
+            max: 0.08
+            scale: 0.02
+          weight: 0.3
+
+    # ---------------- q-profile preferences ----------------
+    - name: "q_profile"
+      enabled: true
+      weight: 0.7
+      terms:
+
+        - name: "q0_comfort_band"
+          enabled: true
+          metric: "q0"
+          penalty:
+            kind: "band"
+            min: 1.05
+            max: 2.50
+            scale: 0.30
+          weight: 0.3
+
+        - name: "low_q_volume_fraction"
+          enabled: true
+          metric: "low_q_volume_fraction"
+          penalty:
+            kind: "hinge_upper"
+            max: 0.25
+            scale: 0.10
+          weight: 0.6
+
+        - name: "rational_proximity"
+          enabled: true
+          metric: "q_rational_proximity"
+          penalty:
+            kind: "hinge_lower"
+            min: 0.05                # "distance" to rationals; tune later
+            scale: 0.03
+          weight: 0.3
+
+        - name: "q_smoothness"
+          enabled: true
+          metric: "q_smoothness"
+          penalty:
+            kind: "linear"           # penalty = metric / scale
+            scale: 1.0
+          weight: 0.2
+
+        - name: "q_monotonicity_soft"
+          enabled: true
+          metric: "q_monotonicity_violation"
+          penalty:
+            kind: "linear"
+            scale: 1.0e-2
+          weight: 0.5
+
+    # ---------------- Shear preferences ----------------
+    - name: "shear"
+      enabled: true
+      weight: 0.6
+      terms:
+
+        - name: "edge_shear_floor"
+          enabled: true
+          metric: "s_edge_mean"
+          penalty:
+            kind: "hinge_lower"
+            min: 0.30
+            scale: 0.15
+          weight: 0.8
+
+        - name: "negative_shear_extent"
+          enabled: true
+          metric: "negative_shear_extent"
+          penalty:
+            kind: "linear"
+            scale: 0.10
+          weight: 0.5
+
+        - name: "shear_spikes"
+          enabled: true
+          metric: "s_max"
+          penalty:
+            kind: "hinge_upper"
+            max: 3.0
+            scale: 1.0
+          weight: 0.2
+
+        - name: "shear_smoothness"
+          enabled: true
+          metric: "shear_smoothness"
+          penalty:
+            kind: "linear"
+            scale: 1.0
+          weight: 0.2
+
+    # ---------------- Ballooning / s-alpha ----------------
+    - name: "ballooning"
+      enabled: true
+      weight: 0.7
+      terms:
+
+        - name: "alpha_edge_cap"
+          enabled: true
+          metric: "alpha_edge_p95"
+          penalty:
+            kind: "hinge_upper"
+            max: 1.2
+            scale: 0.4
+          weight: 0.4
+
+        - name: "s_alpha_negative_margin_integral"
+          enabled: true
+          metric: "s_alpha_envelope_negative_margin_integral"
+          penalty:
+            kind: "linear"
+            scale: 1.0
+          weight: 1.0
+
+        - name: "s_alpha_min_margin_soft"
+          enabled: true
+          metric: "s_alpha_envelope_margin_min"
+          penalty:
+            kind: "hinge_lower"
+            min: 0.10
+            scale: 0.10
+          weight: 0.5
+
+    # ---------------- Pressure & current profile preferences ----------------
+    - name: "profiles"
+      enabled: true
+      weight: 0.5
+      terms:
+
+        - name: "pressure_peaking_band"
+          enabled: true
+          metric: "p_peaking_factor"
+          penalty:
+            kind: "band"
+            min: 1.2
+            max: 3.0
+            scale: 0.6
+          weight: 0.4
+
+        - name: "dpdrho_max_cap"
+          enabled: true
+          metric: "dpdrho_max"
+          penalty:
+            kind: "hinge_upper"
+            max: 3.0                # placeholder units; tune once you see magnitudes
+            scale: 1.0
+          weight: 0.3
+
+        - name: "j_peaking_band"
+          enabled: true
+          metric: "j_peaking_factor"
+          penalty:
+            kind: "band"
+            min: 1.2
+            max: 3.0
+            scale: 0.6
+          weight: 0.3
+
+        - name: "li_target"
+          enabled: true
+          metric: "li"
+          penalty:
+            kind: "target"
+            target: 0.90
+            scale: 0.30
+          weight: 0.5
+
+        - name: "current_centroid_shift_cap"
+          enabled: true
+          metric: "current_centroid_shift"
+          penalty:
+            kind: "hinge_upper"
+            max: 0.20
+            scale: 0.10
+          weight: 0.3
+
+    # ---------------- Shape preferences ----------------
+    - name: "shape"
+      enabled: true
+      weight: 0.3
+      terms:
+
+        - name: "kappa_target"
+          enabled: true
+          metric: "kappa"
+          penalty:
+            kind: "target"
+            target: 1.7
+            scale: 0.4
+          weight: 0.3
+
+        - name: "delta_target"
+          enabled: true
+          metric: "delta"
+          penalty:
+            kind: "target"
+            target: 0.4
+            scale: 0.2
+          weight: 0.3
+
+        - name: "shafranov_shift_soft_cap"
+          enabled: true
+          metric: "shafranov_shift"
+          penalty:
+            kind: "hinge_upper"
+            max: 0.25
+            scale: 0.10
+          weight: 0.4
+
+    # ---------------- Vertical stability proxy ----------------
+    - name: "vertical_proxy"
+      enabled: true
+      weight: 0.4
+      terms:
+
+        - name: "kappa_li_penalty"
+          enabled: true
+          metric: "kappa_li_proxy"
+          penalty:
+            kind: "hinge_upper"
+            max: 2.0                 # placeholder; tune with data
+            scale: 0.5
+          weight: 1.0
+
+    # ---------------- Regularization ----------------
+    - name: "regularization"
+      enabled: true
+      weight: 0.2
+      terms:
+
+        - name: "distance_to_bounds"
+          enabled: true
+          metric: "controls_distance_to_bounds"
+          # This is a meta-metric computed directly from x and its bounds.
+          compute_override:
+            enabled: true
+            tier: "tier1"
+            compute: "distance_to_bounds"
+            params:
+              normalize: "by_range"  # sum_j ((x-mid)/range)^2
+          penalty:
+            kind: "linear"
+            scale: 1.0
+          weight: 1.0
+
+numerics:
+  grid:
+    type: "rect"
+    R:
+      min: 0.2
+      max: 3.0
+      n: 257
+    Z:
+      min: -2.0
+      max: 2.0
+      n: 257

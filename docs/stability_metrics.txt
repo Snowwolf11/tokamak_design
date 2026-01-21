@@ -1,0 +1,260 @@
+Tokamak Equilibrium Optimization
+Metric Catalogue (v0 – conceptual)
+
+This document lists important equilibrium, stability, shaping, and realizability
+metrics for a tokamak design workflow based on equilibrium optimization.
+It is a conceptual reference, not a config file and not implementation-specific.
+
+The metrics are grouped by physical meaning, not by workflow stage.
+Stages (target search, realization, coupled optimization) will enable subsets.
+
+----------------------------------------------------------------
+0. Solver & Feasibility Metrics (Tier 0)
+----------------------------------------------------------------
+These ensure the problem is well-posed and physically meaningful.
+Typically treated as hard gates.
+
+- GS convergence flag
+  Whether the Grad–Shafranov solver converged to tolerance.
+
+- LCFS existence
+  Whether a closed last closed flux surface exists.
+
+- Axis existence
+  Whether a magnetic axis is found inside the LCFS.
+
+- LCFS inside domain
+  Plasma boundary does not intersect the computational domain boundary.
+
+- Geometry validity flags
+  Self-intersections, negative minor radius, nonphysical LCFS shapes.
+
+- Profile validity flags
+  Pressure and current profiles are finite, non-negative where required,
+  and free of NaNs or singularities.
+
+----------------------------------------------------------------
+1. Global Plasma Parameters
+----------------------------------------------------------------
+Scalar quantities characterizing the equilibrium as a whole.
+
+- I_t (toroidal plasma current)
+  Total toroidal current; typical enforcement quantity in GS solves.
+
+- B0
+  Reference toroidal magnetic field strength; key stability and performance knob.
+
+- Plasma volume V
+  Volume enclosed by the LCFS.
+
+- Poloidal flux Φ_p
+  Total poloidal magnetic flux inside the plasma.
+
+- Stored energy W
+  Integral of pressure over volume; performance proxy.
+
+- Aspect ratio A = R0 / a
+  Fundamental geometric parameter affecting stability and engineering.
+
+----------------------------------------------------------------
+2. Safety Factor (q) Metrics
+----------------------------------------------------------------
+The q-profile is central to MHD stability.
+
+Scalar values:
+- q0
+  On-axis safety factor; internal kink proxy.
+
+- q95
+  Edge safety factor; operational stability proxy.
+
+- q_min
+  Minimum q value in the plasma.
+
+- ρ(q_min)
+  Radial location of minimum q.
+
+Profile shape metrics:
+- Monotonicity flag
+  Whether q increases monotonically with radius.
+
+- Low-q volume fraction
+  Fraction of plasma volume with q < 2 (kink/tearing proxy).
+
+- Rational surface proximity
+  Distance of q(ρ) to low-order rationals (2, 3/2, 4/3).
+
+- q-profile smoothness
+  Integral of (d²q/dρ²)²; penalizes unphysical wiggles.
+
+----------------------------------------------------------------
+3. Magnetic Shear Metrics
+----------------------------------------------------------------
+Magnetic shear strongly affects ballooning and kink stability.
+
+Definition (typical):
+s(ρ) = (ρ / q) * dq/dρ
+
+Scalar summaries:
+- s_min, s_max
+  Global extrema of magnetic shear.
+
+- Edge shear mean
+  Mean shear in the edge band (e.g. ρ ∈ [0.8, 0.95]).
+
+- Edge shear minimum
+  Minimum shear in the edge band.
+
+- Core shear metrics
+  Analogous statistics in the core (e.g. ρ ∈ [0.1, 0.3]).
+
+Shape metrics:
+- Negative shear extent
+  Integrated region where s < 0.
+
+- Shear smoothness
+  Penalizes oscillatory or noisy shear profiles.
+
+----------------------------------------------------------------
+4. Pressure & Current Profile Metrics
+----------------------------------------------------------------
+Describe how pressure and current are distributed radially.
+
+Pressure:
+- Peak pressure p(0)
+- Volume-averaged pressure <p>
+- Pressure peaking factor p(0) / <p>
+- Maximum pressure gradient max |dp/dρ|
+- Edge pressure gradient integral
+  Ballooning-relevant proxy.
+
+Current:
+- Current density peaking j(0) / <j>
+- Internal inductance li
+  Proxy for current peaking and vertical stability.
+- Current centroid shift
+  Radial displacement of current density center.
+
+----------------------------------------------------------------
+5. Beta & Performance Metrics
+----------------------------------------------------------------
+Performance indicators balanced against stability.
+
+- Total beta β
+  Ratio of plasma pressure to magnetic pressure.
+
+- Poloidal beta β_p
+  Relevant for vertical stability and control.
+
+- Normalized beta β_N
+  β_N ~ β(%) * a * B / I_t
+
+- Bootstrap fraction (proxy)
+  Estimated fraction of current driven by pressure gradients.
+
+- Pressure utilization efficiency
+  Ratio of achieved beta to an empirical or theoretical limit.
+
+----------------------------------------------------------------
+6. Ballooning / s–α Metrics
+----------------------------------------------------------------
+Intermediate stability proxies capturing pressure-gradient-driven modes.
+
+Ballooning parameter:
+- α(ρ)
+  Proxy typically scaling with R * q² * |dp/dρ| / B².
+
+Scalar summaries:
+- α_max
+  Maximum α (global or edge band).
+
+- Edge α mean
+  Average α in the edge region.
+
+- Integrated edge α
+  Integral of α over an edge band.
+
+s–α envelope metrics:
+- Distance to stability envelope
+  α_crit(s) − α.
+
+- Minimum margin to envelope
+- Integrated negative margin
+  Penalizes regions deep inside unstable domain.
+
+These encode curve-shape information in scalar form.
+
+----------------------------------------------------------------
+7. Shape & Geometry Metrics
+----------------------------------------------------------------
+Important for stability, divertor physics, and engineering.
+
+- Elongation κ
+- Triangularity δ
+- Upper/lower triangularity (for single-null cases)
+- Shafranov shift
+  Radial shift of magnetic axis.
+- Squareness (future)
+- LCFS curvature extrema
+- Clearance to vessel or wall (when vessel is included)
+
+----------------------------------------------------------------
+8. Vertical Stability & Control Proxies
+----------------------------------------------------------------
+Useful even without full vertical stability solvers.
+
+- Combined κ–li penalty
+  Empirical proxy for vertical instability risk.
+
+- Plasma centroid sensitivity to PF currents
+- Required vertical field strength
+- Passive stabilization proxy (future)
+
+----------------------------------------------------------------
+9. PF Realizability Metrics (Stage 1 – cheap)
+----------------------------------------------------------------
+Fast checks to avoid unrealizable target equilibria.
+
+- PF current L2 norm (relative to limits)
+- Maximum PF current fraction
+- PF fit residual (boundary mismatch)
+- PF fit conditioning / singular value ratio
+- Control margin (distance to current limits)
+- Sensitivity of LCFS to PF perturbations
+
+----------------------------------------------------------------
+10. PF & Engineering Metrics (Stage 2+)
+----------------------------------------------------------------
+Used once machine parameters are active.
+
+- Coil force proxies
+- Mutual inductance extremes
+- Coil–coil clearance
+- Coil–vessel clearance
+- Power supply feasibility proxies
+- Energy stored in PF system
+
+----------------------------------------------------------------
+11. Regularization & Numerical Health Metrics
+----------------------------------------------------------------
+Prevent pathological optimizer behavior.
+
+- Distance to bounds (barrier metrics)
+- Profile smoothness penalties
+- Parameter correlation metrics
+- Sensitivity of metrics to small parameter changes
+
+----------------------------------------------------------------
+12. Meta / Diagnostic Metrics
+----------------------------------------------------------------
+Not optimized directly but essential for understanding results.
+
+- Objective term breakdown
+- Constraint margins
+- Metric sensitivities
+- Pareto dominance rank (future)
+- Run-to-run reproducibility indicators
+
+----------------------------------------------------------------
+End of metric catalogue.
+----------------------------------------------------------------

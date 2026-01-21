@@ -1,0 +1,4 @@
+1. Fix create_placeholder option in 00 (the current placeholders it creates are outdated)
+2. Just filling in for NaNs in equilibrium.make_equilibrium() is scetchy
+3. set max_eval in config files
+4. Currently B0 and R0_B0_ref in optimization -> unnecessary 

@@ -1,0 +1,89 @@
+# ============================================================
+# target_equilibrium.yaml
+# ------------------------------------------------------------
+# Defines the "physics target": plasma shape + global quantities
+# + pressure/current profile parameterizations.
+#
+# This is what you would vary in scenario scans:
+# κ, δ, Ip, profiles, etc.
+# ============================================================
+
+meta:
+  name: "baseline_target"
+  description: "H-mode-ish shaped plasma target for learning"
+  schema_version: "0.1"
+
+plasma_geometry:
+  # Shape definition for LCFS (last closed flux surface).
+  # Miller-like parameterization is good for v1 (no X-point).
+  type: "miller"        # "miller" (v1), "diverted" (later), "from_file" (later)
+
+  R0: 1.68              # [m] major radius of plasma center
+  a: 0.48               # [m] minor radius (horizontal)
+  kappa: 1.6           # [-] elongation
+  delta: 0.45           # [-] triangularity
+  n_boundary_points: 360 # resolution of boundary polyline
+
+  # Optional offsets (for slight up/down shift)
+  Z0: 0.0               # [m]
+  # Optional tilt etc. could be added later
+
+global_targets:
+  # Pick ONE of these to enforce in the equilibrium solve:
+  # - Ip_target: enforce total plasma current (common)
+  # - beta_p_target: enforce poloidal beta (harder)
+  # Start with Ip_target.
+  Ip_target: 12.0e6     # [A] total plasma current target
+  enforce: "Ip"         # "Ip" or "none" (none = just use profiles as-is)
+
+  # A useful target for scenario checks (not enforced in v1):
+  q95_target: 3.2       # typical design-ish number (diagnostic only)
+  betaN_target: 2.0     # diagnostic only
+
+  # Boundary flux convention:
+  # Many solvers set psi_lcfs = 0 for convenience.
+  psi_lcfs: 1.0         # [Wb/rad] (units depend on convention)
+
+profiles:
+  # Profile parameterization for GS source terms.
+  # These define p(ψ) and F(ψ)=RBphi (or equivalently FF').
+  #
+  # In v1 keep profiles simple and tune them so equilibrium converges.
+  #
+  # Convention:
+  # - ψ̄ = (ψ - ψ_axis) / (ψ_lcfs - ψ_axis)  ∈ [0,1]
+  # - p(ψ̄) = p0 * (1 - ψ̄)^alpha_p
+  # - F(ψ̄) = F0 * (1 - alpha_F * ψ̄)
+  #
+  pressure:
+    model: "power"
+    p0: 1.2e5           # [Pa] peak-ish pressure scale (tune for reasonable beta)
+    alpha_p: 1.5        # shape of pressure profile
+
+  toroidal_field_function:
+    model: "linear"
+    F0: 4.125           # [T*m] roughly B0*R0 (example), consistent with device B0,R0
+    alpha_F: 0.05       # small variation with ψ̄ (controls diamagnetic effects)
+
+  # Optional: current profile shaping via additional terms
+  # Keep a placeholder for future: bootstrap fraction, j_par shaping, etc.
+  advanced:
+    enabled: false
+    bootstrap_fraction: 0.0
+    # q_profile_target: ... (future)
+    # current_drive: ... (future)e
+
+solver_coupling:
+  # How the target is used in different scripts.
+  #  - fixed_boundary: uses the target LCFS directly
+  #  - coil_fit: uses target boundary points for inverse problem
+  mode: "free_boundary"   # "fixed_boundary" or "free_boundary"
+
+  # Initial LCFS guess for free-boundary solve:
+  initial_lcfs: "target"  # "target" or "previous_run" (later)
+
+diagnostics:
+  # What to compute after equilibrium.
+  compute_q_profile: "approx"  # "none", "approx" (v1), "full" (later)
+  compute_beta_p: true
+  compute_li: true

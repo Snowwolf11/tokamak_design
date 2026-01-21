@@ -1,0 +1,275 @@
+# ============================================================
+# device_space.yaml  (v0.1 FINAL)
+# ============================================================
+
+meta:
+  schema_version: "0.1"
+  name: "device_space_v0"
+  description: >
+    Stage-2 (machine realization) design space. Device/engineering knobs used
+    to fit a PF system to the Stage-1 target equilibrium. Stage 00 snapshots
+    this YAML verbatim into results.h5 under:
+      /input/device_space/...
+
+structure:
+  device_ref: "configs/baseline_device.yaml"   # coil inventory + vessel geometry :contentReference[oaicite:2]{index=2}
+
+variables:
+
+  vessel:
+    # Vacuum vessel / first wall boundary. Used for clearance/gap metrics.
+    # Represented as a polyline of (R,Z) points in order (closed or open).
+    #
+    # Two options:
+    #  - "polyline": explicit list of points
+    #  - "parametric": simple ellipse/circle generation
+    representation: "parametric"  # "parametric" or "polyline"
+
+    parametric:
+      # Simple ellipse centered at (R_center, Z_center)
+      R_center: 
+        units: "m"
+        bounds: [1.5,1.8]
+        init: 1.65     
+        scale: 1.65
+        acitve: false
+      Z_center: 
+        units: "m"
+        bounds: [-0.1,0.1]
+        init: 0.0     # [m]
+        scale: 0.1
+        acitve: false
+      a_wall:     #horizontal semi-axis of vessel
+        units: "m"
+        bounds: [0.5,0.8]
+        init: 0.65     # [m]
+        scale: 0.65
+        acitve: false
+      b_wall:    #vertical semi-axis of vessel
+        units: "m"
+        bounds: [0.9,1.1]
+        init: 1.0     # [m]
+        scale: 1.0
+        acitve: false
+      n_points: 400      # resolution of polyline
+
+
+    polyline:
+      # If representation="polyline", provide points here.
+      # points: [[R1, Z1], [R2, Z2], ...]
+      points: []
+
+  
+  
+  pf_coils:
+
+    PF1U:  # upper inboard-ish PF coil
+      current:
+        units: "A"
+        bounds: [-2.0e6, 2.0e6]    # from baseline_device I_max :contentReference[oaicite:3]{index=3}
+        init: 0.0
+        scale: 1.0e6
+        active: true
+      Rc:                           # coil center R
+        units: "m"
+        bounds: [0.55, 1.55]        # from solver per_coil_bounds :contentReference[oaicite:4]{index=4}
+        init: 1.05                  # baseline_device Rc :contentReference[oaicite:5]{index=5}
+        scale: 1.0
+        active: false
+      Zc:                           # coil center Z
+        units: "m"
+        bounds: [0.60, 1.60]        # from solver per_coil_bounds :contentReference[oaicite:6]{index=6}
+        init: 1.10                  # baseline_device Zc :contentReference[oaicite:7]{index=7}
+        scale: 1.0
+        active: false
+      a:                            # coil size proxy (filament radius for plots/limits)
+        units: "m"
+        bounds: [0.03, 0.12]
+        init: 0.05                  # baseline_device a :contentReference[oaicite:8]{index=8}
+        scale: 0.05
+        active: false
+
+    PF1L:  # lower inboard-ish PF coil
+      current:
+        units: "A"
+        bounds: [-2.0e6, 2.0e6]
+        init: 0.0
+        scale: 1.0e6
+        active: true
+      Rc:
+        units: "m"
+        bounds: [0.45, 1.45]        # per_coil_bounds :contentReference[oaicite:9]{index=9}
+        init: 0.95                  # baseline_device Rc :contentReference[oaicite:10]{index=10}
+        scale: 1.0
+        active: false
+      Zc:
+        units: "m"
+        bounds: [-0.90, 0.10]       # per_coil_bounds :contentReference[oaicite:11]{index=11}
+        init: -0.40                 # baseline_device Zc :contentReference[oaicite:12]{index=12}
+        scale: 1.0
+        active: false
+      a:
+        units: "m"
+        bounds: [0.03, 0.12]
+        init: 0.05
+        scale: 0.05
+        active: false
+
+    PF2U:  # upper mid-radius PF coil
+      current:
+        units: "A"
+        bounds: [-2.0e6, 2.0e6]
+        init: 0.0
+        scale: 1.0e6
+        active: true
+      Rc:
+        units: "m"
+        bounds: [1.20, 2.20]        # per_coil_bounds :contentReference[oaicite:13]{index=13}
+        init: 1.70                  # baseline_device Rc :contentReference[oaicite:14]{index=14}
+        scale: 1.0
+        active: false
+      Zc:
+        units: "m"
+        bounds: [0.60, 1.60]        # per_coil_bounds :contentReference[oaicite:15]{index=15}
+        init: 1.10                  # baseline_device Zc :contentReference[oaicite:16]{index=16}
+        scale: 1.0
+        active: false
+      a:
+        units: "m"
+        bounds: [0.03, 0.12]
+        init: 0.05
+        scale: 0.05
+        active: false
+
+    PF2L:  # lower mid-radius PF coil
+      current:
+        units: "A"
+        bounds: [-2.0e6, 2.0e6]
+        init: 0.0
+        scale: 1.0e6
+        active: true
+      Rc:
+        units: "m"
+        bounds: [1.00, 2.00]        # per_coil_bounds :contentReference[oaicite:17]{index=17}
+        init: 1.50                  # baseline_device Rc :contentReference[oaicite:18]{index=18}
+        scale: 1.0
+        active: false
+      Zc:
+        units: "m"
+        bounds: [-1.55, -0.55]      # per_coil_bounds :contentReference[oaicite:19]{index=19}
+        init: -1.05                 # baseline_device Zc :contentReference[oaicite:20]{index=20}
+        scale: 1.0
+        active: false
+      a:
+        units: "m"
+        bounds: [0.03, 0.12]
+        init: 0.05
+        scale: 0.05
+        active: false
+
+    PF3U:  # outer upper PF coil
+      current:
+        units: "A"
+        bounds: [-2.0e6, 2.0e6]
+        init: 0.0
+        scale: 1.0e6
+        active: true
+      Rc:
+        units: "m"
+        bounds: [1.90, 2.90]        # per_coil_bounds :contentReference[oaicite:21]{index=21}
+        init: 2.40                  # baseline_device Rc :contentReference[oaicite:22]{index=22}
+        scale: 1.0
+        active: false
+      Zc:
+        units: "m"
+        bounds: [-0.10, 0.90]       # per_coil_bounds :contentReference[oaicite:23]{index=23}
+        init: 0.40                  # baseline_device Zc :contentReference[oaicite:24]{index=24}
+        scale: 1.0
+        active: false
+      a:
+        units: "m"
+        bounds: [0.03, 0.12]
+        init: 0.05
+        scale: 0.05
+        active: false
+
+    PF3L:  # outer lower PF coil
+      current:
+        units: "A"
+        bounds: [-2.0e6, 2.0e6]
+        init: 0.0
+        scale: 1.0e6
+        active: true
+      Rc:
+        units: "m"
+        bounds: [1.90, 2.90]        # per_coil_bounds :contentReference[oaicite:25]{index=25}
+        init: 2.40                  # baseline_device Rc :contentReference[oaicite:26]{index=26}
+        scale: 1.0
+        active: false
+      Zc:
+        units: "m"
+        bounds: [-0.90, 0.10]       # per_coil_bounds :contentReference[oaicite:27]{index=27}
+        init: -0.40                 # baseline_device Zc :contentReference[oaicite:28]{index=28}
+        scale: 1.0
+        active: false
+      a:
+        units: "m"
+        bounds: [0.03, 0.12]
+        init: 0.05
+        scale: 0.05
+        active: false
+
+    PF4:   # extra inboard-ish midplane PF coil
+      current:
+        units: "A"
+        bounds: [-2.0e6, 2.0e6]
+        init: 0.0
+        scale: 1.0e6
+        active: true
+      Rc:
+        units: "m"
+        bounds: [0.45, 1.45]        # per_coil_bounds :contentReference[oaicite:29]{index=29}
+        init: 0.95                  # baseline_device Rc :contentReference[oaicite:30]{index=30}
+        scale: 1.0
+        active: false
+      Zc:
+        units: "m"
+        bounds: [-0.10, 0.90]       # per_coil_bounds :contentReference[oaicite:31]{index=31}
+        init: 0.40                  # baseline_device Zc :contentReference[oaicite:32]{index=32}
+        scale: 1.0
+        active: false
+      a:
+        units: "m"
+        bounds: [0.03, 0.12]
+        init: 0.05
+        scale: 0.05
+        active: false
+
+
+  central_solenoid:
+    # In v1 you might treat the solenoid as:
+    #  - (a) another set of "coils" at small R (simple), OR
+    #  - (b) ignore it and prescribe Ip directly.
+    #
+    # Keep this config so the repo is expandable.
+    enabled: False
+    model: "lumped"       # "lumped" (simple ring) or "multi_turn" (later)
+    Rc: 0.60              # [m]
+    Zc: 0.0               # [m]
+    a: 0.25               # [m] proxy radius
+    I_init: 0.0           # [A]
+    I_max: 8.0e6          # [A]
+
+
+constraints:
+  # Simple geometric constraints for early design loops.
+  min_wall_gap: 0.05     # [m] minimum clearance between LCFS and vessel
+  min_coil_wall_gap: 0.05 # [m] coil-to-vessel minimum gap (optional)
+  # Future hook: stress proxies, coil-coil clearance, etc.
+
+
+numerics:
+  # Settings related to precomputations for speed.
+  precompute_coil_greens: true
+  greens_method: "analytic_elliptic"  # "analytic_elliptic" recommended
+  # Future hook: fast multipole / caching schemes, etc.

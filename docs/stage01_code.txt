@@ -1,0 +1,797 @@
+STAGE 01 — IMPLEMENTATION DETAILS (SCRIPTS + FUNCTIONS + I/O CONTRACT)
+=====================================================================
+
+File: 01_implementation.txt
+Scope: Concrete implementation plan for Stage 01 (equilibrium optimization)
+Audience: contributors implementing/maintaining Stage 01 library + orchestrator
+
+This document is intentionally specific:
+  • which scripts exist
+  • which functions exist (and where)
+  • what each function takes and returns
+  • what HDF5 paths are read/written
+  • how evaluation/optimization is structured in code
+
+
+----------------------------------------------------------------------
+0) STAGE 01 SUMMARY
+----------------------------------------------------------------------
+
+Stage 01:
+  • reads equilibrium control space + optimization definition from results.h5
+  • repeatedly:
+      - maps x → physical parameters
+      - builds a fixed LCFS boundary (Miller)
+      - solves fixed-boundary Grad–Shafranov (GS)
+      - computes tiered metrics
+      - evaluates feasibility, constraints, objective
+  • writes trace + best equilibrium to results.h5 under /stage01_fixed/...
+
+
+----------------------------------------------------------------------
+1) PARTICIPATING FILES (STAGE 01)
+----------------------------------------------------------------------
+
+1.1 Orchestrator script
+-----------------------
+
+scripts/01_optimize_equilibrium.py
+
+Contains:
+  - main()                    (entry point)
+  - parse_args()              (CLI)
+  - run_stage01(run_dir, ...) (thin wrapper)
+
+No heavy physics or optimization logic belongs here.
+
+
+1.2 Library modules (must exist for Stage 01)
+--------------------------------------------
+
+src/tokdesign/io/
+  - h5.py
+  - schema.py
+  - logging_utils.py
+  - paths.py (optional but useful)
+
+src/tokdesign/geometry/
+  - boundary.py
+
+src/tokdesign/physics/gs/
+  - grid.py
+  - sources.py
+  - solver_fixed.py
+  - lcfs.py
+
+src/tokdesign/physics/
+  - equilibrium.py
+
+src/tokdesign/optimization/
+  - controls.py
+  - metrics/registry.py
+  - metrics/compute.py
+  - constraints.py
+  - penalties.py
+  - objectives.py
+  - stage01_fixed.py
+
+
+----------------------------------------------------------------------
+2) HDF5 INPUTS / OUTPUTS (STAGE 01 CONTRACT)
+----------------------------------------------------------------------
+
+2.1 Inputs Stage 01 reads (ONLY from results.h5)
+------------------------------------------------
+
+/input/equilibrium_space/...
+/input/equilibrium_optimization/...
+
+Optional (if present):
+/meta/run_id
+/meta/git_hash
+/meta/created_at
+/meta/config_files (list)
+
+Notes:
+- Stage 01 should not read YAML directly.
+- Stage 01 should not depend on external state.
+
+
+2.2 Outputs Stage 01 writes
+---------------------------
+
+All outputs go under:
+
+/stage01_fixed/
+
+Recommended schema:
+
+/stage01_fixed/meta/
+  - stage_name = "01_optimize_equilibrium"
+  - started_at, finished_at
+  - walltime_s
+  - optimizer_name
+  - optimizer_settings (string or small dict)
+  - solver_settings (string or small dict)
+  - grid_settings (NR,NZ,Rmin,Rmax,Zmin,Zmax)
+  - random_seed (if used)
+
+/stage01_fixed/trace/
+  - k                           (int index)
+  - x[k, n]                     (float array)  # all eval points OR all accepted points
+  - f[k]                        (float)
+  - feasible[k]                 (uint8/boolean)
+  - infeasible_reason[k]        (string enum)
+  - constraint_margins[k, m]    (float array)   # standardized: margin>=0 satisfied
+  - objective_blocks[k, b]      (float array)   # e.g. perf,q,shear,alpha,shape,reg
+  - key_metrics[k, ...]         (optional scalar snapshot to plot quickly)
+
+/stage01_fixed/best/
+  /controls/
+    - x_best[n]
+    - params_best/...(stored as groups mirroring equilibrium_space keys)
+  /equilibrium/
+    - grid/R[NR], grid/Z[NZ]
+    - psi[NR,NZ]                (or [NZ,NR] but be consistent)
+    - psibar[NR,NZ]             (optional; can be recomputed)
+    - axis/R_axis, axis/Z_axis
+    - lcfs/R_lcfs[Nθ], lcfs/Z_lcfs[Nθ]
+    - boundary/miller_params/...
+    - profiles/p(psibar_grid?) or profile coefficients (p0, alpha_p, etc.)
+    - profiles/F(psibar) or coefficients (F0, alpha_F)
+    - globals/I_t, B0, R0, a, kappa, delta, ...
+    - solve_info/converged, iters, residual_norm, etc.
+  /metrics/
+    - scalars/...               (q0,q95,qmin,betaN,li,V,W,...)
+    - profiles/rho[Nρ]
+    - profiles/q[Nρ]
+    - profiles/shear[Nρ]
+    - profiles/alpha[Nρ]        (proxy)
+    - envelope/margins[Nρ]      (if computed)
+  /constraints/
+    - names[m]                  (string list)
+    - margins[m]
+  /objective/
+    - total
+    - block_names[b]
+    - block_values[b]
+    - (optional) term_names[t], term_values[t]
+
+
+2.3 Resume/overwrite policy
+---------------------------
+
+Stage 01 should either:
+  A) overwrite /stage01_fixed/ completely (simple)
+or
+  B) snapshot old /stage01_fixed/ into /history/ then overwrite (safer)
+
+Choose one and keep it consistent across stages.
+
+
+----------------------------------------------------------------------
+3) ORCHESTRATOR SCRIPT (scripts/01_optimize_equilibrium.py)
+----------------------------------------------------------------------
+
+3.1 Functions
+-------------
+
+parse_args() -> argparse.Namespace
+  Inputs:
+    CLI
+  Outputs:
+    args object including:
+      --run-dir (or run_id + run-root)
+      --max-evals / --max-iters
+      --seed
+      --optimizer (name)
+      --overwrite
+      --verbose / --quiet
+
+run_stage01(run_dir: Path, args) -> None
+  Responsibilities:
+    - open results.h5
+    - read /input/equilibrium_space + /input/equilibrium_optimization
+    - construct Stage01Problem via tokdesign.optimization.stage01_fixed
+    - call optimizer runner (also in stage01_fixed, not in script)
+    - write outputs to H5
+    - call schema.validate_stage("stage01_fixed", h5)
+
+main()
+  - args = parse_args()
+  - run_stage01(...)
+
+
+3.2 Script dataflow
+-------------------
+
+1) Determine run_dir
+2) h5 = open(results.h5)
+3) cfg_space = h5_read_group("/input/equilibrium_space")
+4) cfg_opt   = h5_read_group("/input/equilibrium_optimization")
+5) problem   = stage01_fixed.build_problem(cfg_space, cfg_opt, h5_context=run_dir/meta)
+6) result    = stage01_fixed.run_optimization(problem, max_evals, seed, optimizer_name)
+7) h5_write_stage01(result)
+8) schema.validate
+
+
+----------------------------------------------------------------------
+4) CORE STAGE 01 LIBRARY: tokdesign.optimization.stage01_fixed
+----------------------------------------------------------------------
+
+This module is the “engine room” of Stage 01. It defines the evaluation
+function and optimization driver.
+
+4.1 Public API (recommended)
+----------------------------
+
+build_problem(cfg_space: dict, cfg_opt: dict, *, run_context: dict) -> Stage01Problem
+  Inputs:
+    - cfg_space: equilibrium_space config (parsed dict)
+    - cfg_opt: equilibrium_optimization config (parsed dict)
+    - run_context: metadata (grid defaults, logging hooks, etc.)
+  Output:
+    - Stage01Problem object bundling everything needed for evaluation
+
+evaluate(problem: Stage01Problem, x: ndarray) -> EvalResult
+  Inputs:
+    - problem: prepared caches, grid, solver settings, metric registry
+    - x: control vector (only active parameters)
+  Output:
+    - EvalResult:
+        feasible: bool
+        reason: str
+        f: float
+        constraints: dict[name->margin]
+        objective_blocks: dict[block->value]
+        metrics: dict[str->scalar/array]
+        artifacts: dict[str->arrays] (psi, axis, lcfs, etc. only if feasible)
+        timings: dict[str->float]
+
+run_optimization(problem: Stage01Problem, *, optimizer: str, max_evals: int, seed: int) -> Stage01Result
+  Inputs:
+    - problem
+    - optimizer settings
+  Output:
+    - Stage01Result:
+        trace arrays
+        best candidate
+        meta
+
+write_outputs(h5, result: Stage01Result) -> None
+  (could live in io/h5.py, but stage01_fixed can own the mapping)
+
+
+4.2 Internal structure (recommended classes/structs)
+----------------------------------------------------
+
+Stage01Problem
+  Fields:
+    - controls: ControlMapping (from controls.py)
+    - grid: Grid (from physics/gs/grid.py)
+    - solver_settings: dict
+    - metric_registry: MetricRegistry
+    - objective: ObjectiveFunction
+    - constraints: ConstraintSet
+    - feasibility: FeasibilityGateSet
+    - caches:
+        last_psi (for warm start)
+        last_x
+        preallocated arrays (optional)
+    - runtime:
+        logger
+        timers
+        random generator
+
+EvalResult
+  Fields:
+    - feasible: bool
+    - reason: str
+    - f: float (objective value or big penalty)
+    - constraint_margins: dict[str,float]
+    - objective_blocks: dict[str,float]
+    - metrics: dict[str, Any]
+    - artifacts (only for feasible):
+        psi, axis, lcfs, profiles, derived arrays
+    - timing: dict[str,float]
+
+
+4.3 The evaluate() pipeline (exact steps)
+-----------------------------------------
+
+evaluate(problem, x):
+  0) Map x -> params
+     params = problem.controls.x_to_params(x)
+
+  1) Geometry
+     lcfs = geometry.boundary.miller_boundary(params.boundary, n_points)
+
+     if not geometry_valid(lcfs):
+        return infeasible("geometry_invalid")
+
+  2) Grid/mask
+     mask = gs.grid.domain_mask_from_lcfs(problem.grid, lcfs)
+
+     if mask is empty / too small:
+        return infeasible("lcfs_outside_domain")
+
+  3) Profiles & source terms
+     profiles = gs.sources.build_profiles(params.profiles, params.globals)
+     if not profiles_valid(profiles):
+        return infeasible("profile_invalid")
+
+  4) Solve fixed-boundary GS
+     psi, solve_info = gs.solver_fixed.solve_fixed_boundary(
+                         grid=problem.grid,
+                         lcfs=lcfs,
+                         mask=mask,
+                         profiles=profiles,
+                         enforce_I_t=params.globals.I_t,
+                         init_guess=problem.caches.last_psi,
+                         settings=problem.solver_settings
+                       )
+     if not solve_info.converged:
+        return infeasible("gs_not_converged")
+
+  5) Axis + LCFS extraction checks
+     axis = gs.lcfs.find_axis(psi, problem.grid, mask)
+     if axis missing:
+        return infeasible("no_axis")
+
+     lcfs_found = gs.lcfs.extract_lcfs_contour(psi, psi_lcfs, problem.grid)
+     if lcfs_found missing:
+        return infeasible("no_lcfs_contour")
+
+  6) Derived equilibrium quantities (tiered metrics)
+     eq = physics.equilibrium.EquilibriumState.from_psi(
+            psi=psi, grid=problem.grid, lcfs=lcfs_found, axis=axis,
+            profiles=profiles, radial_coord="rho=sqrt(psibar)"
+          )
+
+  7) Feasibility gates (tier0)
+     gates_ok, reason = problem.feasibility.check(eq, solve_info, geometry=...)
+     if not gates_ok:
+        return infeasible(reason)
+
+  8) Constraints (hard)
+     margins = problem.constraints.evaluate(eq, params)
+     if any(m < 0):
+        # depending on optimizer: either mark infeasible or penalize smoothly
+        return infeasible("constraint_violation", margins=margins)
+
+  9) Objective (weighted sum)
+     f, blocks, terms = problem.objective.evaluate(eq, params)
+     # objective may request additional metrics from registry; registry caches them
+
+ 10) Update caches
+     problem.caches.last_psi = psi
+     problem.caches.last_x = x
+
+ 11) Return feasible EvalResult with artifacts (psi/lcfs/axis) for best candidate tracking
+
+
+----------------------------------------------------------------------
+5) CONTROL SPACE MAPPING: tokdesign.optimization.controls
+----------------------------------------------------------------------
+
+Purpose:
+  Convert YAML “equilibrium_space” into a vector space x with:
+    - ordered active variables
+    - bounds
+    - default initial values
+    - vector<->dict mapping
+
+Recommended functions:
+
+load_equilibrium_space(cfg_space: dict) -> ControlMapping
+  - parses cfg_space dict
+  - collects all variables with active:true
+  - assigns stable ordering:
+      boundary vars first
+      then global vars
+      then profile vars
+  - stores bounds arrays (lb, ub)
+  - stores nominal/default x0
+
+ControlMapping.x_to_params(x) -> Params
+  - returns structured Params object with:
+      Params.boundary (R0,a,kappa,delta,Z0,...)
+      Params.globals  (I_t,B0,R_ref,...)
+      Params.profiles (p0,alpha_p,F0,alpha_F,...)
+  - applies derived relationships:
+      e.g. F0 = B0 * R0_B0_ref (if configured)
+
+ControlMapping.params_to_x(params) -> x
+  - inverse mapping (used to store best params or restart)
+
+ControlMapping.sample_initial(seed) -> x0
+  - robust x0 sampling inside bounds (optional)
+
+Params object should be lightweight (dataclass) so downstream code is clean.
+
+
+----------------------------------------------------------------------
+6) GEOMETRY: tokdesign.geometry.boundary
+----------------------------------------------------------------------
+
+miller_boundary(params, n_points) -> Boundary
+  Inputs:
+    - params: (R0, a, kappa, delta, Z0, ...)
+    - n_points: integer (e.g. 360)
+  Outputs:
+    - Boundary struct:
+        theta[N]
+        R[N], Z[N]
+        polygon (Nx2) or equivalent
+
+validate_boundary(boundary) -> (ok:bool, reason:str)
+  Checks:
+    - finite values
+    - no self-intersections (optional cheap check)
+    - reasonable a>0, kappa>1, |delta|<1 etc.
+    - polygon area > min threshold
+
+
+----------------------------------------------------------------------
+7) GS PHYSICS IMPLEMENTATION: tokdesign.physics.gs
+----------------------------------------------------------------------
+
+7.1 grid.py
+-----------
+
+build_grid(cfg_opt or cfg_space) -> Grid
+  - chooses R,Z extents based on R0,a,kappa (padding)
+  - chooses NR,NZ from solver settings
+  - returns Grid struct with:
+      R[NR], Z[NZ], dR, dZ
+      mesh arrays if needed (lazy)
+
+domain_mask_from_lcfs(grid, boundary) -> mask[NZ,NR] bool
+  - point-in-polygon test on gridpoints (vectorized)
+  - used to restrict plasma region Ω
+
+
+7.2 sources.py
+--------------
+
+build_profiles(params_profiles, params_globals) -> Profiles
+  Implements:
+    p(ψ̄) = p0 * (1 - ψ̄)^alpha_p
+    F(ψ̄) = F0 * (1 - alpha_F * ψ̄)
+
+  Also provides:
+    dp/dψ, d(F^2)/dψ (needed in GS RHS)
+  Note:
+    Derivatives are with respect to ψ (not ψ̄), so include scaling:
+      ψ̄ = (ψ - ψ_axis)/(ψ_lcfs - ψ_axis)
+
+  Profiles struct should include:
+    - functions or sampled arrays on a 1D ψ̄ grid
+    - coefficients (p0, alpha_p, F0, alpha_F)
+    - validity flags
+
+
+enforce_total_current_closure(profiles, target_I_t, geometry, grid, settings) -> ProfilesAdjusted
+  If your solver uses an internal parameter (e.g. j0 scaling) to satisfy I_t:
+    - do it here, cleanly, so solver_fixed sees consistent sources.
+
+
+7.3 solver_fixed.py
+-------------------
+
+solve_fixed_boundary(grid, lcfs, mask, profiles, enforce_I_t, init_guess, settings) -> (psi, SolveInfo)
+
+SolveInfo includes:
+  - converged (bool)
+  - n_iter
+  - residual_norm
+  - message/reason
+  - (optional) linear solver stats
+
+Implementation notes (typical v0 approach):
+  - discretize Δ* operator on (R,Z) grid with finite differences
+  - enforce Dirichlet boundary at LCFS:
+      ψ = ψ_lcfs (usually choose 1.0)
+  - solve nonlinear RHS via iteration:
+      * Picard: build RHS from current ψ, solve linear system, repeat
+      * Newton (later): requires Jacobian
+  - sparse matrix assembled once if operator constant; update RHS only
+  - use pre-factorization if using direct solver; otherwise iterative solver w/ preconditioner
+
+Key performance levers:
+  - build sparse operator once per grid
+  - warm start from init_guess (previous psi)
+  - stop early if residual small
+  - reuse mask and boundary indices
+
+
+7.4 lcfs.py
+-----------
+
+find_axis(psi, grid, mask) -> Axis
+  - locate magnetic axis as min(ψ) inside mask (or via gradient root refine)
+
+extract_lcfs_contour(psi, grid, psi_lcfs) -> BoundaryFound
+  - contour extraction at ψ=psi_lcfs
+  - pick the closed contour that corresponds to the plasma region
+  - return ordered (R,Z) points
+
+These are also part of feasibility gates.
+
+
+----------------------------------------------------------------------
+8) EQUILIBRIUM DIAGNOSTICS: tokdesign.physics.equilibrium
+----------------------------------------------------------------------
+
+The equilibrium module computes all quantities requested by metrics, constraints,
+and objective terms.
+
+Recommended entry point:
+
+compute_equilibrium_state(psi, grid, lcfs, axis, profiles, radial_coord_cfg) -> EquilibriumState
+
+EquilibriumState should provide:
+  Geometry:
+    - R0, a, kappa, delta (from boundary)
+    - volume, area, elongation, triangularity (computed)
+  Flux normalization:
+    - psi_axis, psi_lcfs, psibar field
+  Radial coordinate:
+    - rho = sqrt(psibar) mapping
+    - surfaces at rho grid
+  Profiles:
+    - q(rho)
+    - shear s(rho) = (rho/q)*dq/drho
+    - alpha(rho) proxy (pressure gradient + geometry factor approximation)
+  Global:
+    - I_p (should equal target within tolerance)
+    - beta, beta_p, beta_N
+    - li, W, V
+  Quality flags:
+    - monotonicity checks
+    - NaN checks
+    - envelope margin arrays if computed
+
+Derivative smoothing:
+  - apply Savitzky–Golay to q(rho) before differentiating (configurable)
+
+
+----------------------------------------------------------------------
+9) METRICS REGISTRY: tokdesign.optimization.metrics
+----------------------------------------------------------------------
+
+The metric registry makes evaluation efficient and consistent.
+
+MetricRegistry(cfg_opt) should:
+  - know tiers: tier0, tier1, tier2
+  - know metric dependency graph
+  - provide get(name) with caching
+
+Public methods:
+
+MetricRegistry.reset()
+MetricRegistry.provide_base(eq_state)
+MetricRegistry.get(name) -> value
+MetricRegistry.get_many(names) -> dict
+
+Implementation pattern:
+  - base quantities: psi, psibar, rho grid, q(rho) computed once
+  - derived metrics: shear, alpha, envelope margins computed on demand
+  - store results in dict cache
+
+This ensures:
+  - objective and constraints can request overlapping metrics with no recompute
+  - expensive metrics computed only if needed
+
+
+----------------------------------------------------------------------
+10) CONSTRAINTS: tokdesign.optimization.constraints
+----------------------------------------------------------------------
+
+ConstraintSet(cfg_opt) builds a set of constraint evaluators.
+
+Functions:
+
+build_constraints(cfg_opt) -> ConstraintSet
+ConstraintSet.evaluate(eq_state, params) -> dict[name->margin]
+
+Standard margin convention:
+  margin >= 0 means satisfied
+
+Examples:
+  q0_min constraint:
+    margin = q0 - q0_min
+  kappa_max constraint:
+    margin = kappa_max - kappa
+
+ConstraintSet should also provide:
+  - ordered list of constraint names (for trace arrays)
+  - vector form evaluate_vec() for speed
+
+
+----------------------------------------------------------------------
+11) OBJECTIVE: tokdesign.optimization.objectives + penalties
+----------------------------------------------------------------------
+
+Objective assembly is config-driven.
+
+11.1 Penalty primitives (penalties.py)
+--------------------------------------
+
+hinge_lower(y, y_min, scale) -> float
+hinge_upper(y, y_max, scale) -> float
+target(y, y_star, scale) -> float
+band(y, a, b, scale) -> float
+
+Optional:
+  smooth_hinge(...) using softplus for differentiability
+
+
+11.2 ObjectiveFunction (objectives.py)
+--------------------------------------
+
+build_objective(cfg_opt) -> ObjectiveFunction
+
+ObjectiveFunction.evaluate(eq_state, params) -> (f_total, blocks_dict, terms_dict)
+
+Implementation:
+  - cfg_opt defines blocks with weights, each block defines terms
+  - each term references either:
+      * scalar metric (e.g. q0)
+      * profile metric (e.g. q(rho))
+      * aggregated metric (e.g. mean(shear over band))
+  - term specifies penalty type:
+      hinge_lower / hinge_upper / target / band / integral_envelope_violation
+  - registry provides needed metrics
+
+Return:
+  - f_total
+  - blocks: {block_name: block_value}
+  - terms:  {term_name: term_value}
+
+
+----------------------------------------------------------------------
+12) FEASIBILITY GATES: tokdesign.optimization.stage01_fixed (or separate module)
+----------------------------------------------------------------------
+
+FeasibilityGateSet.check(eq_state, solve_info, geometry_info) -> (ok, reason)
+
+Typical checks:
+  - solve_info.converged
+  - axis exists and is inside LCFS
+  - LCFS contour exists
+  - psibar is finite
+  - q(rho) finite on rho grid
+  - no NaNs/Infs
+  - plasma region not degenerate (area > threshold)
+
+Design:
+  - keep these fast
+  - return a short, stable reason string for trace storage
+
+
+----------------------------------------------------------------------
+13) OPTIMIZER DRIVER (where it lives and how it logs)
+----------------------------------------------------------------------
+
+run_optimization(problem, optimizer, max_evals, seed) should:
+  - initialize x0
+  - loop evals
+  - maintain current best feasible solution
+  - periodically write trace increments (optional)
+  - return full result bundle
+
+Recommended approach v0:
+  - derivative-free optimizer (CMA-ES / Powell / Nelder–Mead)
+  - treat infeasible solutions as huge penalty (or reject)
+  - use warm-start of psi between nearby x evaluations
+
+Trace writing strategy:
+  - store every evaluation (best for debugging)
+  - OR store accepted points only (smaller file)
+  - always store “best so far” snapshots (robust)
+
+
+----------------------------------------------------------------------
+14) FUNCTION INVENTORY (QUICK LIST)
+----------------------------------------------------------------------
+
+Below is a concise list of “must implement” functions (Stage 01):
+
+scripts/01_optimize_equilibrium.py
+  - parse_args()
+  - run_stage01(run_dir, args)
+  - main()
+
+tokdesign/io/h5.py
+  - read_group_as_dict(h5, path)                 # /input/...
+  - write_stage01_meta(h5, meta)
+  - write_stage01_trace(h5, trace_struct)
+  - write_stage01_best(h5, best_struct)
+
+tokdesign/io/schema.py
+  - validate_stage01(h5)
+
+tokdesign/geometry/boundary.py
+  - miller_boundary(params, n_points)
+  - validate_boundary(boundary)
+
+tokdesign/physics/gs/grid.py
+  - build_grid(grid_cfg, boundary_hint)
+  - domain_mask_from_lcfs(grid, boundary)
+
+tokdesign/physics/gs/sources.py
+  - build_profiles(profile_params, global_params)
+  - profiles_valid(profiles)
+  - enforce_total_current_closure(...)
+
+tokdesign/physics/gs/solver_fixed.py
+  - solve_fixed_boundary(...)
+
+tokdesign/physics/gs/lcfs.py
+  - find_axis(psi, grid, mask)
+  - extract_lcfs_contour(psi, grid, psi_lcfs)
+
+tokdesign/physics/equilibrium.py
+  - compute_equilibrium_state(...)
+
+tokdesign/optimization/controls.py
+  - load_equilibrium_space(cfg_space) -> ControlMapping
+  - ControlMapping.x_to_params(x)
+  - ControlMapping.params_to_x(params)
+  - ControlMapping.initial_x(seed)
+
+tokdesign/optimization/metrics/registry.py
+  - MetricRegistry(cfg_opt)
+  - MetricRegistry.reset()
+  - MetricRegistry.provide_base(eq_state)
+  - MetricRegistry.get(name)
+
+tokdesign/optimization/metrics/compute.py
+  - metric implementations used by objective/constraints
+
+tokdesign/optimization/constraints.py
+  - build_constraints(cfg_opt)
+  - ConstraintSet.evaluate(eq_state, params)
+
+tokdesign/optimization/penalties.py
+  - hinge_lower, hinge_upper, target, band, (optional soft variants)
+
+tokdesign/optimization/objectives.py
+  - build_objective(cfg_opt)
+  - ObjectiveFunction.evaluate(eq_state, params)
+
+tokdesign/optimization/stage01_fixed.py
+  - build_problem(cfg_space, cfg_opt, run_context)
+  - evaluate(problem, x)
+  - run_optimization(problem, optimizer, max_evals, seed)
+
+
+----------------------------------------------------------------------
+15) WHAT “DETAILED” MEANS IN PRACTICE (IMPLEMENTATION NOTES)
+----------------------------------------------------------------------
+
+A) Keep orchestrator tiny:
+   If you feel tempted to add a helper function in the script, it likely belongs
+   in src/tokdesign/...
+
+B) Make eval() deterministic:
+   Deterministic evaluation is crucial for debugging and reproducibility.
+
+C) Store enough debugging data:
+   Save infeasible reasons and constraint margins even on failure.
+   This makes tuning feasible.
+
+D) Use consistent shapes/order:
+   Decide once whether psi is [NZ,NR] or [NR,NZ] and enforce it everywhere.
+
+E) Warm-start as default:
+   problem.caches.last_psi should be used unless solver explicitly disables.
+
+F) Keep tiering real:
+   Do not compute profiles/expensive metrics before feasibility is confirmed.
+
+
+----------------------------------------------------------------------
+END OF DOCUMENT
+----------------------------------------------------------------------
