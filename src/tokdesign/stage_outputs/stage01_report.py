@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+import shutil
 
 import numpy as np
 
@@ -339,10 +340,6 @@ def _build_meta_table(h5, max_rows: int = 50) -> Optional[Table]:
     t = Table(data, repeatRows=1, hAlign="LEFT", colWidths=[6.0 * cm, 7.5 * cm])
     t.setStyle(_table_style())
     return t
-
-from pathlib import Path
-import shutil
-from typing import List
 
 
 def delete_dir_if_all_match(out: List[Path], expected_dir: Path) -> None:
