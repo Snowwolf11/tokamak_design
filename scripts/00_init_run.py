@@ -113,6 +113,11 @@ def parse_args() -> argparse.Namespace:
         default="INFO",
         help="Logging level (DEBUG, INFO, WARNING, ERROR)",
     )
+    p.add_argument(
+        "--quicklook",
+        action="store_true",
+        help="creates a figures dir",
+    )
     return p.parse_args()
 
 
@@ -163,10 +168,11 @@ def main() -> None:
     # --- create run dir ---
     run_id = runpaths.make_run_id(prefix=prefix)
     run_root = Path(args.run_root).expanduser().resolve()
-    paths = runpaths.create_run_dir(run_root, run_id)
+    paths = runpaths.create_run_dir(run_root, run_id, args.copy_inputs, args.quicklook)
 
     # --- logging ---
     logger = setup_logger(paths["log_path"], level=args.log_level)
+    logger.info("========== Stage 00: Initialize Run ==========")
     logger.info("Initialized run directory: %s", str(paths["run_dir"]))
     logger.info("Run ID: %s", run_id)
     logger.info("Base dir: %s", str(base_dir))
@@ -182,7 +188,6 @@ def main() -> None:
     copied_paths: list[Path] = []
     inputs_dir = Path(paths["run_dir"]) / "inputs"
     if args.copy_inputs:
-        inputs_dir.mkdir(parents=True, exist_ok=True)
         # paths.copy_inputs expects list[Path]
         runpaths.copy_inputs(list(config_map.values()), inputs_dir)
         # derive destination list for meta (copy_inputs currently doesn't return)

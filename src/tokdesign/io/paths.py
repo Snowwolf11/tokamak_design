@@ -46,7 +46,7 @@ def make_run_id(prefix: Optional[str] = None) -> str:
 # RUN DIRECTORY CREATION
 # ============================================================
 
-def create_run_dir(base_dir: Path, run_id: str) -> dict:
+def create_run_dir(base_dir: Path, run_id: str, input_bool: bool = False, figures_bool: bool = False) -> dict:
     """
     Create standard run directory structure.
 
@@ -68,11 +68,13 @@ def create_run_dir(base_dir: Path, run_id: str) -> dict:
             f"Run directory already exists:\n{run_dir}"
         )
 
-    #inputs_dir = run_dir / "inputs"
+    inputs_dir = run_dir / "inputs"
+    if input_bool:
+        inputs_dir.mkdir(parents=True, exist_ok=False)
+    
     figures_dir = run_dir / "figures"
-
-    #inputs_dir.mkdir(parents=True, exist_ok=False)
-    figures_dir.mkdir(parents=True, exist_ok=False)
+    if figures_bool:
+        figures_dir.mkdir(parents=True, exist_ok=False)
 
     results_path = run_dir / "results.h5"
     summary_path = run_dir / "summary.csv"

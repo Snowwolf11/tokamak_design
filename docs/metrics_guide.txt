@@ -852,6 +852,7 @@ Engineering / feasibility:
 
 Typical region + better direction:
   Lower is generally better (faster), but only meaningful alongside residual_norm.
+  (has to be smaller than max_iter (=200?) for convergence
 
 Implemented here:
   gs_iterations = float(input gs_iterations)
@@ -871,6 +872,7 @@ Engineering / feasibility:
 Typical region + better direction:
   Should be “small” relative to the solver’s expected tolerance; lower is better.
   (No universal absolute number without knowing solver definition.)
+	(<1e-8 is good)
 
 Implemented here:
   residual_norm = float(input residual_norm)

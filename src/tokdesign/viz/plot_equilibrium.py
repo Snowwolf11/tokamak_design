@@ -54,8 +54,8 @@ def plot_psi_map(
     psi_lcfs: Optional[float] = None,
     vessel_boundary: Optional[np.ndarray] = None,
     lcfs_boundary: Optional[np.ndarray] = None,
-    extra_flux_levels: Sequence[float] = (0.2, 0.4, 0.6, 0.8),
-    n_contours: int = 40,
+    extra_flux_levels: Sequence[float] = (0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99),
+    n_contours: int = 100,
 ) -> Tuple[plt.Figure, plt.Axes]:
     """
     Poloidal flux map: heatmap + contours + optional LCFS and vessel overlay.
@@ -80,8 +80,8 @@ def plot_psi_map(
     cb.set_label("ψ [Wb/rad]")
 
     # Contours of psi
-    cs = ax.contour(R, Z, psi, levels=n_contours, linewidths=0.7)
-    ax.clabel(cs, inline=True, fontsize=7, fmt="%.2g")
+    cs = ax.contour(R, Z, psi, levels=n_contours, linewidths=0.2)
+    #ax.clabel(cs, inline=True, fontsize=5, fmt="%.2g")
 
     # Optional LCFS polyline
     if lcfs_boundary is not None:

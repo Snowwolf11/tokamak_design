@@ -3,3 +3,4 @@
 3. set max_eval in config files
 4. Currently B0 and R0_B0_ref in optimization -> unnecessary 
 5. Include greenwald limits, temperature, density, ...
+6. Include logger in 09

@@ -340,6 +340,54 @@ def _build_meta_table(h5, max_rows: int = 50) -> Optional[Table]:
     t.setStyle(_table_style())
     return t
 
+from pathlib import Path
+import shutil
+from typing import List
+
+
+def delete_dir_if_all_match(out: List[Path], expected_dir: Path) -> None:
+    # Basic validation
+    if not out:
+        raise ValueError("Path list is empty.")
+
+    # Resolve everything (avoids relative path issues)
+    out = [p.resolve() for p in out]
+    expected_dir = expected_dir.resolve()
+
+    # Check all files exist
+    missing = [p for p in out if not p.exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"Some files do not exist: {[str(p) for p in missing]}"
+        )
+
+    # Get parent directories
+    parents = {p.parent for p in out}
+
+    # Check they all share the same directory
+    if len(parents) != 1:
+        raise ValueError(
+            f"Files are in different directories: {[str(p) for p in parents]}"
+        )
+
+    actual_dir = parents.pop()
+
+    # Check directory matches expected
+    if actual_dir != expected_dir:
+        raise ValueError(
+            f"Directory mismatch.\n"
+            f"Expected: {expected_dir}\n"
+            f"Found:    {actual_dir}"
+        )
+
+    # Safety check
+    if not actual_dir.exists():
+        raise FileNotFoundError(f"Directory does not exist: {actual_dir}")
+
+    # Delete directory recursively
+    shutil.rmtree(actual_dir)
+    print(f"Deleted directory: {actual_dir}")
+
 
 # -----------------------------------------------------------------------------
 # Plot orchestration (HDF5 read here, plotting delegated to viz)
@@ -512,7 +560,7 @@ def write_report(run_dir: str | Path, h5_path: str | Path) -> Path:
     pdf_path = run_dir / "stage01_report.pdf"
 
     _patch_reportlab_md5_compat()
-    
+
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="H1x", parent=styles["Heading1"], spaceAfter=10))
     styles.add(ParagraphStyle(name="H2x", parent=styles["Heading2"], spaceAfter=6))
@@ -573,6 +621,7 @@ def write_report(run_dir: str | Path, h5_path: str | Path) -> Path:
                     story.append(Paragraph(p.stem.replace("_", " "), styles["Small"]))
                     story.append(Image(str(p), width=16.5 * cm, height=11.0 * cm))
                     story.append(Spacer(1, 0.35 * cm))
+    
 
     doc = SimpleDocTemplate(
         str(pdf_path),
@@ -592,6 +641,7 @@ def write_report(run_dir: str | Path, h5_path: str | Path) -> Path:
         _page_decor(c, d, title)
 
     doc.build(story, onFirstPage=_decor_first, onLaterPages=_decor_later)
+    delete_dir_if_all_match(plot_paths, run_dir / "stage01_report_assets")
     return pdf_path
 
 

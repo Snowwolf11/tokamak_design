@@ -34,9 +34,12 @@ Create a new run and optimize equilibrium:
 
     python scripts/run_workflow.py \
         --prefix baseline \
-        --notes "test" \
+        --notes "some notes" \
         --to 01 \
-        --copy-inputs
+        --copy-inputs \
+        --generate-report \
+        --quicklook \
+        --fieldlines
 
 Resume an existing run (skip 00) and rerun stage 01:
 
@@ -78,7 +81,7 @@ STAGE_TO_SCRIPT = {
     "09": "09_quicklook.py",
 }
 
-IMPLEMENTED = {"00", "01"}  # update as you implement more
+IMPLEMENTED = {"00", "01", "09"}  # update as you implement more
 
 
 # ============================================================
@@ -138,6 +141,8 @@ def _cmd_00(args: argparse.Namespace, scripts_dir: Path, run_root: Path) -> List
 
     if args.create_placeholders:
         cmd.append("--create-placeholders")
+    if args.quicklook:
+        cmd.append("--quicklook")
 
     return cmd
 
@@ -181,8 +186,12 @@ def _cmd_09(args: argparse.Namespace, scripts_dir: Path, run_dir: Path) -> List[
     cmd = [
         sys.executable, str(script),
         "--run-dir", str(run_dir),
-        "--log-level", args.log_level,
+        #"--log-level", args.log_level,
+        "--formats", "png",
     ]
+
+    if args.fieldlines:
+        cmd.append("--fieldlines")
     return cmd
 
 
@@ -238,6 +247,7 @@ def main() -> None:
     parser.add_argument("--to", default="01", help="Final stage to run (00–04 or 09).")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite stage outputs where supported.")
     parser.add_argument("--quicklook", action="store_true", help="Run stage 09_quicklook at end (if implemented).")
+    parser.add_argument("--fieldlines", action="store_true", help="Also plot exemplary 3D field lines if fields exist")
 
     args = parser.parse_args()
 
