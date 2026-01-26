@@ -103,6 +103,9 @@ class EquilibriumResult:
     rho: np.ndarray
     p: np.ndarray
     F: np.ndarray
+    Te: np.ndarray
+    n_e: np.ndarray
+
     q: np.ndarray
     s: np.ndarray
     alpha: np.ndarray
@@ -191,6 +194,8 @@ def solve_fixed_equilibrium(
         rho=out["rho"],
         p=out["p"],
         F=out["F"],
+        Te=out["Te"],
+        n_e=out["n_e"],
         q=out["q"],
         s=out["s"],
         alpha=out["alpha"],
@@ -313,6 +318,10 @@ def make_equilibrium(
     p = profiles.pressure(rho)
     F = profiles.toroidal_flux_function(rho)
 
+    Te = profiles.temperature(rho)
+    n_e = profiles.density(rho)
+
+
     # ------------------------------------------------------------------
     # Stage-01 finiteness contract: fill outside-plasma values
     # ------------------------------------------------------------------
@@ -322,6 +331,9 @@ def make_equilibrium(
 
     # Pressure outside: vacuum
     p[outside] = 0.0
+
+    Te[outside] = 0.0
+    n_e[outside] = 0.0
 
     # Toroidal flux function outside: set to a safe edge/vacuum value.
     # Prefer an edge-band median (psi_bar>=0.95), else any finite median, else 0.
@@ -395,6 +407,8 @@ def make_equilibrium(
     p = _finite_fill(p, 0.0)
     F = _finite_fill(F, F_edge)
     q = _finite_fill(q, q_edge)
+    n_e = _finite_fill(n_e, 0.0)
+    Te = _finite_fill(Te, 0.0)
     if s.shape == psi.shape:
         s = _finite_fill(s, 0.0)
     if alpha.shape == psi.shape:
@@ -418,6 +432,8 @@ def make_equilibrium(
         rho=rho,
         p=p,
         F=F,
+        Te=Te.astype(float),
+        n_e=n_e.astype(float),
         q=q,
         s=s,
         alpha=alpha,
@@ -439,6 +455,8 @@ def make_equilibrium(
         rho=rho.astype(float),
         p=p.astype(float),
         F=F.astype(float),
+        Te=Te.astype(float),
+        n_e=n_e.astype(float),
         q=q.astype(float),
         s=np.asarray(s, dtype=float),
         alpha=np.asarray(alpha, dtype=float),

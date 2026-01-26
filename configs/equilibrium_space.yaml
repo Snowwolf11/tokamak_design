@@ -27,6 +27,10 @@ models:
     toroidal_field_function:
       model: "linear"      # F = F0*(1 - alpha_F*psi_bar)
       psi_bar: "normalized"
+    temperature:
+      model: "power"       # T = T0*(1-psi_bar)^alpha_T
+      psi_bar: "normalized"
+
 
   enforcement:
     mode: "I_t"            # enforce toroidal plasma current per GS solve (Ip in literature)
@@ -103,8 +107,8 @@ variables:
     pressure:
       p0:                  # pressure scale (peak-ish)
         units: "Pa"
-        bounds: [1.0e4, 8.0e5]
-        init: 1.0e4
+        bounds: [5.0e4, 12.0e5]
+        init: 3.0e5
         scale: 1.0e5
         active: true
 
@@ -129,3 +133,28 @@ variables:
         init: 0.03808
         scale: 0.05
         active: true
+
+    temperature:
+      Te0_keV:
+        units: "keV"
+        bounds: [2.0, 30.0]
+        init: 10.0
+        scale: 10.0
+        active: true
+
+      alpha_Te:
+        units: "-"
+        bounds: [0.2, 6.0]
+        init: 1.0
+        scale: 1.5
+        active: true
+
+      Ti_over_Te:
+        units: "-"
+        bounds: [0.7, 2.0]
+        init: 1.0
+        scale: 1.0
+        active: false
+
+  scenario:
+    P_aux_MW: 50.0      #auxilliary heating assumption

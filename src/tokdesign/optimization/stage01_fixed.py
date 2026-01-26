@@ -163,6 +163,8 @@ class EquilibriumResult:
     rho: np.ndarray
     p: np.ndarray
     F: np.ndarray
+    Te: np.ndarray
+    n_e: np.ndarray
     q: np.ndarray
     s: np.ndarray
     alpha: np.ndarray
@@ -631,6 +633,8 @@ def _coerce_equilibrium(eq_obj: Any) -> EquilibriumResult:
             rho=np.asarray(prof["rho"]),
             p=np.asarray(prof["p"]),
             F=np.asarray(prof["F"]),
+            Te=np.asarray(prof[ "Te"]),
+            n_e=np.asarray(prof["n_e"]),
             q=np.asarray(prof["q"]),
             s=np.asarray(prof["s"]),
             alpha=np.asarray(prof["alpha"]),
@@ -657,6 +661,8 @@ def _coerce_equilibrium(eq_obj: Any) -> EquilibriumResult:
         rho=np.asarray(getattr(eq_obj, "rho")),
         p=np.asarray(getattr(eq_obj, "p")),
         F=np.asarray(getattr(eq_obj, "F")),
+        Te=np.asarray(getattr(eq_obj, "Te")),
+        n_e=np.asarray(getattr(eq_obj, "n_e")),
         q=np.asarray(getattr(eq_obj, "q")),
         s=np.asarray(getattr(eq_obj, "s")),
         alpha=np.asarray(getattr(eq_obj, "alpha")),
@@ -722,7 +728,7 @@ def _finite_equilibrium(eq: EquilibriumResult) -> bool:
     arrs = [
         eq.psi, eq.plasma_mask, eq.j_phi,
         eq.BR, eq.BZ, eq.Bphi,
-        eq.psi_bar, eq.rho, eq.p, eq.F, eq.q, eq.s, eq.alpha
+        eq.psi_bar, eq.rho, eq.p, eq.F, eq.Te, eq.n_e, eq.q, eq.s, eq.alpha
     ]
     for a in arrs:
         aa = np.asarray(a)
@@ -871,7 +877,7 @@ def run_optimization(
         #if eval_k%12==0: print(f"er (k={eval_k}) = {er}")
 
         print(f"progress:{eval_k} out of {max_evals} --> ~ {(100*eval_k/max_evals):.3g}%")
-        #print(f"for x({eval_k}) i candidate(global): er.eq={er.eq is not None},  and (er.objective_total < best_f)={er.objective_total < best_f} and (er.feasible or allow_infeasible_best)={(er.feasible or allow_infeasible_best)}")
+        #print(f"for x({eval_k}) i candidate(global): er.eq is not None={er.eq is not None},  and (er.objective_total < best_f)={er.objective_total < best_f} and (er.feasible or allow_infeasible_best)={(er.feasible or allow_infeasible_best)}")
         #print(f"er({eval_k})={er}")
         if (er.eq is not None) and (er.objective_total < best_f) and (er.feasible or allow_infeasible_best):
             best_f = float(er.objective_total)
@@ -880,6 +886,9 @@ def run_optimization(
             best_metrics = dict(er.metrics)
             best_c_margins = np.asarray(er.constraint_margins, dtype=float).copy()
             best_x = np.asarray(x, dtype=float).copy()
+        else:
+            print(f"for eval_k={eval_k} evaluation failed: er.fail_reason:{er.fail_reason}")
+            print(f"for x({eval_k}) in candidate(global): er.eq is not None={er.eq is not None},  and (er.objective_total < best_f)={er.objective_total < best_f} and (er.feasible or allow_infeasible_best)={(er.feasible or allow_infeasible_best)}")
 
         eval_k += 1
 
@@ -903,7 +912,7 @@ def run_optimization(
         )
 
         print(f"progress:{eval_k} out of {max_evals} --> ~ {(100*eval_k/max_evals):.3g}%")
-        #print(f"for x({eval_k}) i candidate(local): er.eq={er.eq is not None},  and (er.objective_total < best_f)={er.objective_total < best_f} and (er.feasible or allow_infeasible_best)={(er.feasible or allow_infeasible_best)}")
+        #print(f"for x({eval_k}) i candidate(local): er.eq is not None={er.eq is not None},  and (er.objective_total < best_f)={er.objective_total < best_f} and (er.feasible or allow_infeasible_best)={(er.feasible or allow_infeasible_best)}")
         if (er.eq is not None) and (er.objective_total < best_f) and (er.feasible or allow_infeasible_best):
             best_f = float(er.objective_total)
             best_idx = eval_k
@@ -911,6 +920,9 @@ def run_optimization(
             best_metrics = dict(er.metrics)
             best_c_margins = np.asarray(er.constraint_margins, dtype=float).copy()
             best_x = np.asarray(x, dtype=float).copy()
+        else:
+            print(f"for eval_k={eval_k} evaluation failed: er.fail_reason:{er.fail_reason}")
+            print(f"for x({eval_k}) in candidate(global): er.eq is not None={er.eq is not None},  and (er.objective_total < best_f)={er.objective_total < best_f} and (er.feasible or allow_infeasible_best)={(er.feasible or allow_infeasible_best)}")
 
         eval_k += 1
         #print(f"for x({eval_k}) i candidate")

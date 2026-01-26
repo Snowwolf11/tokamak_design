@@ -46,6 +46,8 @@ from typing import Any, Dict, Optional, Protocol, Tuple
 import numpy as np
 import warnings
 
+from tokdesign.constants import E_CHARGE
+
 
 # =============================================================================
 # Public helpers
@@ -123,6 +125,13 @@ class GSProfiles(Protocol):
     def toroidal_flux_function(self, rho: np.ndarray) -> np.ndarray:
         """Return F(rho)=R*Bphi (same shape as rho input)."""
 
+    def temperature(self, rho: np.ndarray) -> np.ndarray:
+        """Return electron temperature Te(rho) in keV (same shape as rho input)."""
+
+    def density(self, rho: np.ndarray) -> np.ndarray:
+        """Return electron density n_e(rho) in m^-3 (same shape as rho input)."""
+
+
 
 # =============================================================================
 # Profile model implementations
@@ -140,6 +149,23 @@ class PressurePowerModel:
         psi_bar = np.asarray(psi_bar, dtype=float)
         base = np.clip(1.0 - psi_bar, 0.0, 1.0)
         return float(self.p0) * np.power(base, float(self.alpha_p))
+
+
+@dataclass(frozen=True)
+class TemperaturePowerModel:
+    """
+    Te(psi_bar) = Te0_keV * (1 - psi_bar)**alpha_Te
+
+    Output is in keV.
+    """
+    Te0_keV: float
+    alpha_Te: float
+
+    def __call__(self, psi_bar: np.ndarray) -> np.ndarray:
+        psi_bar = np.asarray(psi_bar, dtype=float)
+        base = np.clip(1.0 - psi_bar, 0.0, 1.0)
+        Te = float(self.Te0_keV) * np.power(base, float(self.alpha_Te))
+        return np.maximum(Te, 0.0)
 
 
 @dataclass(frozen=True)
@@ -205,6 +231,9 @@ class FixedBoundaryGSProfiles:
     F_model: FLinearModel
     j_shape_model: CurrentShapePowerModel
 
+    temperature_model: TemperaturePowerModel
+    Ti_over_Te: float = 1.0  # assume Ti = Ti_over_Te * Te
+
     # enforcement / metadata (may be None if caller didn't pass full controls)
     I_t: Optional[float] = None
 
@@ -265,6 +294,38 @@ class FixedBoundaryGSProfiles:
         scale = float(self.I_t) / I_shape
         return scale * shape
 
+    def temperature(self, rho: np.ndarray) -> np.ndarray:
+        rho = np.asarray(rho, dtype=float)
+        psi_bar = np.clip(rho * rho, 0.0, 1.0)
+        return self.temperature_model(psi_bar)
+
+
+    def density(self, rho: np.ndarray) -> np.ndarray:
+        """
+        Derive n_e from p and assumed temperatures.
+
+        Assumptions:
+        - single ion species with Zi=1 and quasi-neutrality: n_i ~= n_e
+        - total pressure p = n_e * (Te + Ti) * e   with Te,Ti in eV
+        - Te is modeled; Ti = Ti_over_Te * Te
+        """
+        p = self.pressure(rho)  # Pa = J/m^3
+        Te_keV = self.temperature(rho)
+
+        Ti_over_Te = float(self.Ti_over_Te)
+        if not np.isfinite(Ti_over_Te) or Ti_over_Te <= 0.0:
+            Ti_over_Te = 1.0
+
+        # Convert keV -> eV -> Joule
+        Te_J = Te_keV * 1.0e3 * E_CHARGE
+        Ti_J = (Ti_over_Te * Te_keV) * 1.0e3 * E_CHARGE
+
+        denom = Te_J + Ti_J  # J per particle
+        denom = np.maximum(denom, 1e-30)
+
+        n_e = np.asarray(p, dtype=float) / denom  # (J/m^3) / (J) = 1/m^3
+        return np.maximum(n_e, 0.0)
+
 
 # =============================================================================
 # Factory: build profiles from config / controls
@@ -308,6 +369,16 @@ def build_gs_profiles(cfg_or_controls: Dict[str, Any]) -> GSProfiles:
     alpha_p = float(p_cfg.get("alpha_p", 1.5))  # matches typical Stage-01 init
 
     pressure_model = PressurePowerModel(p0=p0, alpha_p=alpha_p)
+
+    # -------------------------
+    # Temperature model
+    # -------------------------
+    T_cfg = profiles_cfg.get("temperature", {}) if isinstance(profiles_cfg.get("temperature", {}), dict) else {}
+    Te0_keV = float(T_cfg.get("Te0_keV", 10.0))
+    alpha_Te = float(T_cfg.get("alpha_Te", 1.0))
+    Ti_over_Te = float(T_cfg.get("Ti_over_Te", 1.0))
+
+    temperature_model = TemperaturePowerModel(Te0_keV=Te0_keV, alpha_Te=alpha_Te)
 
     # -------------------------
     # Toroidal flux function F
@@ -389,6 +460,8 @@ def build_gs_profiles(cfg_or_controls: Dict[str, Any]) -> GSProfiles:
         pressure_model=pressure_model,
         F_model=F_model,
         j_shape_model=j_shape_model,
+        temperature_model=temperature_model,
+        Ti_over_Te=Ti_over_Te,
         I_t=I_t,
     )
 

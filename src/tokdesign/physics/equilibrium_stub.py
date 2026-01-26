@@ -132,6 +132,11 @@ def solve_fixed_equilibrium(params: Dict[str, Any], grid: Any, cfg_opt: Dict[str
     p0 = float(_get(controls, ["profiles", "pressure", "p0"], 2.0e4))
     p_exp = float(_get(controls, ["profiles", "pressure", "p_exp"], 1.7))
 
+    # Temperature profile controls (toy)
+    Te0_keV = float(_get(controls, ["profiles", "temperature", "Te0_keV"], 10.0))
+    Te_exp  = float(_get(controls, ["profiles", "temperature", "alpha_Te"], 1.0))
+    Ti_over_Te = float(_get(controls, ["profiles", "temperature", "Ti_over_Te"], 1.0))
+
     # q profile endpoints (toy)
     q0_target = float(_get(controls, ["profiles", "safety_factor", "q0"], 1.2))
     q95_target = float(_get(controls, ["profiles", "safety_factor", "q95"], 3.5))
