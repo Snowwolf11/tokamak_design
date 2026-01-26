@@ -139,6 +139,9 @@ def _write_required_trace_metrics(h5: h5py.File, result: Stage01Result) -> None:
     required = [
         "I_t","B0","volume","poloidal_flux","stored_energy","aspect_ratio",
         "beta","beta_p","beta_N","li","kappa","delta","shafranov_shift",
+        "n_vol_avg", "n_line_avg_midplane", "n_vol_avg_1e20", "n_line_avg_midplane_1e20",
+        "n_greenwald_1e20", "greenwald_fraction",
+        "Te_max","Te_min","Te_p05","Te_p50","Te_p95",
         "q0","q95","q_min","rho_qmin","low_q_volume_fraction","q_monotonicity_violation",
         "q_rational_proximity","q_smoothness",
         "s_edge_mean","s_edge_min","s_min","s_max","negative_shear_extent","shear_smoothness",
@@ -146,6 +149,7 @@ def _write_required_trace_metrics(h5: h5py.File, result: Stage01Result) -> None:
         "s_alpha_negative_margin_integral",
         "p_peaking_factor","dpdrho_max","edge_pressure_gradient_integral",
         "j_peaking_factor","current_centroid_shift",
+        "fusion_power_MW", "alpha_power_MW", "Q_est",
     ]
     N = int(result.n_eval)
     for name in required:
@@ -189,6 +193,8 @@ def _write_best_equilibrium(h5: h5py.File, eq: EquilibriumResult) -> None:
     h5_write_array(h5, "/stage01_fixed/best/profiles/rho", np.asarray(eq.rho))
     h5_write_array(h5, "/stage01_fixed/best/profiles/p", np.asarray(eq.p))
     h5_write_array(h5, "/stage01_fixed/best/profiles/F", np.asarray(eq.F))
+    h5_write_array(h5, "/stage01_fixed/best/profiles/Te", np.asarray(eq.Te))
+    h5_write_array(h5, "/stage01_fixed/best/profiles/n_e", np.asarray(eq.n_e))
     h5_write_array(h5, "/stage01_fixed/best/profiles/q", np.asarray(eq.q))
     h5_write_array(h5, "/stage01_fixed/best/profiles/s", np.asarray(eq.s))
     h5_write_array(h5, "/stage01_fixed/best/profiles/alpha", np.asarray(eq.alpha))

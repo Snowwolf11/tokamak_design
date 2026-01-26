@@ -53,8 +53,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 import numpy as np
 from matplotlib.path import Path as MplPath
 
-
-MU0 = 4e-7 * np.pi
+from tokdesign.constants import DT_FUSION_ENERGY, MU0
 
 
 # =============================================================================
@@ -90,6 +89,18 @@ def compute_equilibrium_scalars(**kwargs: Any) -> Dict[str, float]:
     q = np.asarray(kwargs.get("q"), dtype=float)
     s = np.asarray(kwargs.get("s"), dtype=float)
     alpha = np.asarray(kwargs.get("alpha"), dtype=float)
+
+    n_e = np.asarray(kwargs.get("n_e", None), dtype=float)
+    Te = np.asarray(kwargs.get("Te", None), dtype=float)
+
+    # pull Ti/Te and aux power from controls (scenario assumptions)
+    scenario_cfg = controls.get("scenario", {}) if isinstance(controls.get("scenario", {}), dict) else {}
+    P_aux_MW = scenario_cfg.get("P_aux_MW", None)
+    P_aux_MW = float(P_aux_MW) if P_aux_MW is not None else None
+
+    profiles_cfg = controls.get("profiles", {}) if isinstance(controls.get("profiles", {}), dict) else {}
+    T_cfg = profiles_cfg.get("temperature", {}) if isinstance(profiles_cfg.get("temperature", {}), dict) else {}
+    Ti_over_Te = float(T_cfg.get("Ti_over_Te", 1.0))
 
     gs_iterations = int(kwargs.get("gs_iterations", -1))
     residual_norm = float(kwargs.get("residual_norm", np.nan))
@@ -240,6 +251,30 @@ def compute_equilibrium_scalars(**kwargs: Any) -> Dict[str, float]:
     )
     current_centroid_shift = _current_centroid_shift(j_phi=j_phi, plasma_mask=plasma_mask, RR=RR, dA=dA, R0_geom=R0_geom)
 
+    # ---------------- n metrics
+    density_metrics = _density_metrics(
+        n_e=n_e,
+        plasma_mask=plasma_mask,
+        RR=RR,
+        ZZ=ZZ,
+        dA=dA,
+        axis_Z=axis_Z,
+        I_t=I_t,
+        a_geom=a_geom,
+    )
+
+    temp_metrics = _temperature_metrics(Te=Te, plasma_mask=plasma_mask)
+
+    fusion_metrics = _fusion_metrics(
+        Te=Te,
+        n_e=n_e,
+        plasma_mask=plasma_mask,
+        RR=RR,
+        dA=dA,
+        Ti_over_Te=Ti_over_Te,
+        P_aux_MW=P_aux_MW,
+    )
+
     # Required dictionary (fill everything explicitly)
     out: Dict[str, float] = {
         "I_t": float(I_t),
@@ -286,9 +321,30 @@ def compute_equilibrium_scalars(**kwargs: Any) -> Dict[str, float]:
         "dpdrho_max": float(p_metrics["d_drho_max"]),
         "edge_pressure_gradient_integral": float(p_metrics["edge_grad_integral"]),
 
+        # temperature block (keV)
+        "Te_max": float(temp_metrics["Te_max"]),
+        "Te_min": float(temp_metrics["Te_min"]),
+        "Te_p05": float(temp_metrics["Te_p05"]),
+        "Te_p50": float(temp_metrics["Te_p50"]),
+        "Te_p95": float(temp_metrics["Te_p95"]),
+
+        # density block
+        "n_vol_avg": float(density_metrics["n_vol_avg"]),
+        "n_line_avg_midplane": float(density_metrics["n_line_avg_midplane"]),
+        "n_vol_avg_1e20": float(density_metrics["n_vol_avg_1e20"]),
+        "n_line_avg_midplane_1e20": float(density_metrics["n_line_avg_midplane_1e20"]),
+        "n_greenwald_1e20": float(density_metrics["n_greenwald_1e20"]),
+        "greenwald_fraction": float(density_metrics["greenwald_fraction"]),
+
         # current block
         "j_peaking_factor": float(j_metrics["peaking_factor"]),
         "current_centroid_shift": float(current_centroid_shift),
+
+        # fusion block
+        "fusion_power_MW": float(fusion_metrics["fusion_power_MW"]),
+        "alpha_power_MW": float(fusion_metrics["alpha_power_MW"]),
+        "Q_est": float(fusion_metrics["Q_est"]),
+
     }
 
     # It’s often useful (debug) to expose solver diagnostics in scalars too.
@@ -303,18 +359,45 @@ def compute_equilibrium_scalars(**kwargs: Any) -> Dict[str, float]:
 # Required-metrics fallback
 # =============================================================================
 
+
 def _all_required_nan(*, gs_iterations: int, residual_norm: float) -> Dict[str, float]:
     required = [
         "I_t","B0","volume","poloidal_flux","stored_energy","aspect_ratio",
         "beta","beta_p","beta_N","li","kappa","delta","shafranov_shift",
-        "q0","q95","q_min","rho_qmin","low_q_volume_fraction","q_monotonicity_violation",
-        "q_rational_proximity","q_smoothness",
-        "s_edge_mean","s_edge_min","s_min","s_max","negative_shear_extent","shear_smoothness",
-        "alpha_edge_mean","alpha_edge_p95","alpha_edge_integral","s_alpha_margin_min",
-        "s_alpha_negative_margin_integral",
+
+        # q block
+        "q0","q95","q_min","rho_qmin","low_q_volume_fraction",
+        "q_monotonicity_violation","q_rational_proximity","q_smoothness",
+
+        # s block
+        "s_edge_mean","s_edge_min","s_min","s_max",
+        "negative_shear_extent","shear_smoothness",
+
+        # alpha block
+        "alpha_edge_mean","alpha_edge_p95","alpha_edge_integral",
+        "s_alpha_margin_min","s_alpha_negative_margin_integral",
+
+        # pressure block
         "p_peaking_factor","dpdrho_max","edge_pressure_gradient_integral",
+
+        # temp block
+        "Te_max","Te_min","Te_p05","Te_p50","Te_p95",
+
+        # density block  <-- ADD THIS
+        "n_vol_avg",
+        "n_line_avg_midplane",
+        "n_vol_avg_1e20",
+        "n_line_avg_midplane_1e20",
+        "n_greenwald_1e20",
+        "greenwald_fraction",
+
+        # current block
         "j_peaking_factor","current_centroid_shift",
+
+        # fusion block
+        "fusion_power_MW", "alpha_power_MW", "Q_est",
     ]
+
     out = {k: float(np.nan) for k in required}
     out["gs_iterations"] = float(gs_iterations)
     out["residual_norm"] = float(residual_norm)
@@ -660,6 +743,134 @@ def _alpha_metrics(
     return out
 
 
+
+# =============================================================================
+# Density (n_e)
+# =============================================================================
+
+
+def _density_metrics(
+    *,
+    n_e: Any,
+    plasma_mask: np.ndarray,
+    RR: np.ndarray,
+    ZZ: np.ndarray,
+    dA: float,
+    axis_Z: float,
+    I_t: float,
+    a_geom: float,
+) -> Dict[str, float]:
+    """
+    Density + Greenwald metrics.
+
+    Conventions:
+      - n_greenwald_1e20 = Ip(MA) / (pi a^2)   (units 1e20 m^-3)
+      - greenwald_fraction = n_line_avg_midplane_1e20 / n_greenwald_1e20
+    """
+    # Default outputs (safe)
+    out = {
+        "n_vol_avg": float("nan"),
+        "n_line_avg_midplane": float("nan"),
+        "n_vol_avg_1e20": float("nan"),
+        "n_line_avg_midplane_1e20": float("nan"),
+        "n_greenwald_1e20": float("nan"),
+        "greenwald_fraction": float("nan"),
+    }
+
+    if n_e is None:
+        # Still compute Greenwald if possible (depends only on Ip and a)
+        Ip_MA = abs(float(I_t)) / 1e6
+        a = float(a_geom)
+        if np.isfinite(Ip_MA) and np.isfinite(a) and a > 0:
+            out["n_greenwald_1e20"] = float(Ip_MA / (np.pi * a * a + 1e-30))
+        return out
+
+    n_e = np.asarray(n_e, dtype=float)
+    if n_e.shape != plasma_mask.shape:
+        return out  # shape mismatch: don't guess
+
+    # Toroidal volume-weighting uses 2πR Jacobian, consistent with the rest of this file
+    R_pl = RR[plasma_mask]
+    w = 2.0 * np.pi * R_pl * float(dA)
+
+    n_pl = n_e[plasma_mask]
+    if np.any(np.isfinite(n_pl)) and np.nansum(w) > 0:
+        n_vol_avg = float(np.nansum(n_pl * w) / (np.nansum(w) + 1e-30))
+        out["n_vol_avg"] = n_vol_avg
+        out["n_vol_avg_1e20"] = float(n_vol_avg / 1e20)
+
+    # Midplane chord line-average (simple proxy, cheap + monotone):
+    # choose Z row closest to axis_Z, average n_e along R where inside plasma.
+    Z1 = ZZ[:, 0]
+    if np.isfinite(axis_Z) and Z1.ndim == 1 and len(Z1) == ZZ.shape[0]:
+        iz0 = int(np.nanargmin(np.abs(Z1 - axis_Z)))
+    else:
+        iz0 = ZZ.shape[0] // 2
+
+    chord_mask = plasma_mask[iz0, :]
+    if np.any(chord_mask):
+        n_chord = n_e[iz0, chord_mask]
+        # If grid spacing in R isn’t explicitly available here, a plain mean is OK.
+        n_line_avg = float(np.nanmean(n_chord))
+        out["n_line_avg_midplane"] = n_line_avg
+        out["n_line_avg_midplane_1e20"] = float(n_line_avg / 1e20)
+
+    # Greenwald
+    Ip_MA = abs(float(I_t)) / 1e6
+    a = float(a_geom)
+    if np.isfinite(Ip_MA) and np.isfinite(a) and a > 0:
+        nG_1e20 = float(Ip_MA / (np.pi * a * a + 1e-30))
+        out["n_greenwald_1e20"] = nG_1e20
+
+        nline = out["n_line_avg_midplane_1e20"]
+        if np.isfinite(nline) and np.isfinite(nG_1e20) and nG_1e20 > 0:
+            out["greenwald_fraction"] = float(nline / (nG_1e20 + 1e-30))
+
+    return out
+
+# =============================================================================
+# Temperature (Te)
+# =============================================================================
+
+def _temperature_metrics(
+    *,
+    Te: Any,
+    plasma_mask: np.ndarray,
+) -> Dict[str, float]:
+    """
+    Temperature metrics (Te in keV on the full grid).
+    """
+    out = {
+        "Te_max": float("nan"),
+        "Te_min": float("nan"),
+        "Te_p05": float("nan"),
+        "Te_p50": float("nan"),
+        "Te_p95": float("nan"),
+    }
+
+    if Te is None:
+        return out
+
+    Te = np.asarray(Te, dtype=float)
+    if Te.shape != plasma_mask.shape:
+        return out
+
+    Te_pl = Te[plasma_mask]
+    Te_pl = Te_pl[np.isfinite(Te_pl)]
+    if Te_pl.size == 0:
+        return out
+
+    out["Te_max"] = float(np.max(Te_pl))
+    out["Te_min"] = float(np.min(Te_pl))
+
+    # robust distribution summaries (nice for optimization / constraints)
+    out["Te_p05"] = float(np.percentile(Te_pl, 5.0))
+    out["Te_p50"] = float(np.percentile(Te_pl, 50.0))
+    out["Te_p95"] = float(np.percentile(Te_pl, 95.0))
+    return out
+
+
+
 # =============================================================================
 # Peaking + gradients (p and j)
 # =============================================================================
@@ -714,6 +925,75 @@ def _current_centroid_shift(*, j_phi: np.ndarray, plasma_mask: np.ndarray, RR: n
     R_centroid = float(np.sum(R_pl * w) / (np.sum(w) + 1e-30))
     return float(R_centroid - R0_geom)
 
+
+# =============================================================================
+# Fusion metrics
+# =============================================================================
+
+def _fusion_metrics(
+    *,
+    Te: Any,
+    n_e: Any,
+    plasma_mask: np.ndarray,
+    RR: np.ndarray,
+    dA: float,
+    Ti_over_Te: float,
+    P_aux_MW: float | None,
+) -> Dict[str, float]:
+    out = {
+        "fusion_power_MW": float("nan"),
+        "alpha_power_MW": float("nan"),
+        "Q_est": float("nan"),
+    }
+
+    if Te is None or n_e is None:
+        return out
+
+    if Te.shape != plasma_mask.shape or n_e.shape != plasma_mask.shape:
+        return out
+
+    # Ti model: Ti = Ti_over_Te * Te
+    r = float(Ti_over_Te) if np.isfinite(Ti_over_Te) and Ti_over_Te > 0 else 1.0
+    Ti_keV = r * Te
+
+    # DT reactivity
+    sv = _dt_reactivity_m3_s(Ti_keV)  # m^3/s
+
+    # Assume 50/50 D-T, quasi-neutral: nD=nT=0.5*ni≈0.5*ne
+    rate = 0.25 * (n_e**2) * sv  # reactions / (m^3 s)
+
+    # Fusion energy per reaction
+
+    p_fus = rate * DT_FUSION_ENERGY  # W/m^3
+
+    # Toroidal volume element dV ≈ 2πR dA
+    w = 2.0 * np.pi * RR * float(dA)  # m^3 per cell
+    P_fus_W = float(np.nansum(p_fus[plasma_mask] * w[plasma_mask]))
+
+    out["fusion_power_MW"] = P_fus_W * 1e-6
+
+    # Alpha power is 3.5 MeV out of 17.6 MeV
+    out["alpha_power_MW"] = out["fusion_power_MW"] * (3.5 / 17.6)
+
+    if P_aux_MW is not None and np.isfinite(P_aux_MW) and P_aux_MW > 0:
+        out["Q_est"] = out["fusion_power_MW"] / float(P_aux_MW)
+
+    return out
+
+def _dt_reactivity_m3_s(Ti_keV: np.ndarray) -> np.ndarray:
+    """
+    Approximate DT reactivity <σv> in m^3/s for Ti in keV.
+    Smooth, monotone, decent accuracy in ~1–40 keV for scenario optimization.
+    """
+    T = np.asarray(Ti_keV, dtype=float)
+    T = np.clip(T, 0.1, 100.0)
+
+    A = 19.94
+    A0_cm3_s = 3.68e-12
+    sv_cm3_s = A0_cm3_s * (T ** (-2.0/3.0)) * np.exp(-A * (T ** (-1.0/3.0)))
+    return sv_cm3_s * 1e-6  # -> m^3/s
+
+    
 
 # =============================================================================
 # Binning utilities

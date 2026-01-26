@@ -4,3 +4,6 @@
 4. Currently B0 and R0_B0_ref in optimization -> unnecessary 
 5. Include greenwald limits, temperature, density, ...
 6. Include logger in 09
+7. Make option to choose that either all profiles (p,T,n) are independent ore choose which one is the dependent one
+8. There are currently two EquilibriumResult class definitions (in stage01_fixed.py and equilibrium.py) - this is double.
+9. The metrics are currently computed kinda independently of equilibrium_optimization.yaml (e.g. theenable: true/false doesnt really do miuch). So instead of using hardcoded schema lists (metrics._all_required_nan() and stage01_outputs._write_required_trace_metrics()), use the config file.

@@ -31,6 +31,9 @@ evaluation:
     enable: true
     order: ["tier0", "tier1", "tier2"]
 
+optimizer:
+  max_evals: 7
+  
 # ------------------------------------------------------------
 # Feasibility gates C(x) (Tier-0 hard validity checks)
 # ------------------------------------------------------------
@@ -272,6 +275,53 @@ metrics:
       quantity: "q"
       coordinate: "rho"
       band: { rho_min: 0.0, rho_max: 1.0 }
+
+  n_vol_avg_1e20:
+    enabled: true
+    tier: "tier1"
+    compute: "from_scalars"
+
+  n_line_avg_midplane_1e20:
+    enabled: true
+    tier: "tier1"
+    compute: "from_scalars"
+
+  n_greenwald_1e20:
+    enabled: true
+    tier: "tier1"
+    compute: "from_scalars"
+
+  greenwald_fraction:
+    enabled: true
+    tier: "tier1"
+    compute: "from_scalars"
+
+  Te_max:
+    enabled: true
+    tier: "tier1"
+    compute: "from_scalars"
+
+  Te_min:
+    enabled: true
+    tier: "tier1"
+    compute: "from_scalars"
+
+  Te_p05:
+    enabled: false
+    tier: "tier1"
+    compute: "from_scalars"
+
+  Te_p50:
+    enabled: false
+    tier: "tier1"
+    compute: "from_scalars"
+
+  Te_p95:
+    enabled: false
+    tier: "tier1"
+    compute: "from_scalars"
+
+
 
   # ---------------- Tier 2: shear, alpha, profile gradients ----------------
   shear_profile:
@@ -515,6 +565,13 @@ constraints:
       op: ">="
       value: 0.00
 
+    - name: "greenwald_fraction_max"
+      enabled: false
+      metric: "greenwald_fraction"
+      op: "<="
+      value: 1.0
+
+
 # ------------------------------------------------------------
 # Objective f(x): weighted sum of blocks and terms
 # f(x) = sum_blocks w_block * J_block
@@ -560,6 +617,43 @@ objective:
             max: 0.08
             scale: 0.02
           weight: 0.3
+
+        - name: "greenwald_soft_cap"
+          enabled: true
+          metric: "greenwald_fraction"
+          penalty:
+            kind: "hinge_upper"
+            max: 0.9
+            scale: 0.1
+          weight: 0.4
+
+        - name: "Te_high"
+          enabled: true
+          metric: "Te_p95"
+          penalty:
+            kind: "hinge_lower"
+            min: 10.0     # keV
+            scale: 2.0
+          weight: 0.3
+
+        - name: "n_line_floor"
+          enabled: true
+          metric: "n_line_avg_midplane_1e20"
+          penalty:
+            kind: "hinge_lower"
+            min: 0.3
+            scale: 0.2
+          weight: 0.2
+
+        - name: "Pfus_high"
+          enabled: true
+          metric: "fusion_power_MW"
+          penalty:
+            kind: "hinge_lower"
+            min: 50.0     # MW, pick a first target
+            scale: 10.0
+          weight: 0.6
+
 
     # ---------------- q-profile preferences ----------------
     - name: "q_profile"
